@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"fmt"
 	"os"
 
@@ -16,28 +15,30 @@ var downloadCmd = &cobra.Command{
 	Short: "Download files from URLs",
 	Args:  cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
+		client := lib.NewClient()
 		failed := 0
-		respch, err := lib.DownloadBatch(context.Background(), args)
-		if err != nil {
-			fmt.Fprint(os.Stderr, err)
-			os.Exit(1)
-		}
-		for resp := range respch {
+		for _, url := range args {
+			req, err := lib.NewRequest(".", url)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Invalid URL: %s (%v)\n", url, err)
+				failed++
+				continue
+			}
+			resp := client.Do(req)
+			<-resp.Done
 			if verbose {
-				if resp.Err != nil {
-					fmt.Fprintf(os.Stderr, "Failed: %s (%v)\n", resp.Filename, resp.Err)
+				if err := resp.Err(); err != nil {
+					fmt.Fprintf(os.Stderr, "Failed: %s (%v)\n", resp.Filename, err)
 				} else {
-					// Try to get more info if available
 					info := ""
 					if fi, err := os.Stat(resp.Filename); err == nil {
 						size := fi.Size()
 						info += fmt.Sprintf("size: %d bytes", size)
 					}
-					// Duration and speed are not available in DownloadResponse, so print only what we can
 					fmt.Fprintf(os.Stdout, "Downloaded: %s (%s)\n", resp.Filename, info)
 				}
 			}
-			if resp.Err != nil {
+			if resp.Err() != nil {
 				failed++
 			}
 		}

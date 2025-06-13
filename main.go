@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/sebrandon1/grab/cmd/grab/cmd"
+	"github.com/sebrandon1/grab/cmd"
 )
 
 func main() {
