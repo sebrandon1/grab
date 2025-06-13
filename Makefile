@@ -4,7 +4,7 @@ vet:
 	go vet ./...
 
 build:
-	go build -o $(APP_NAME)
+	go build -o ./grab ./cmd/grab
 
 lint:
 	golangci-lint run ./...
