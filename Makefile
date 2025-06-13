@@ -1,17 +1,14 @@
-GO = go
-GOGET = $(GO) get -u
+APP_NAME=grab
 
-all: check
+vet:
+	go vet ./...
 
-check:
-	cd v3 && $(GO) test -v -cover -race ./...
-	cd v3/cmd/grab && $(MAKE) -B all
+build:
+	go build -o $(APP_NAME)
 
-install:
-	cd v3/cmd/grab && $(MAKE) install
+lint:
+	golangci-lint run ./...
 
-clean:
-	cd v3 && $(GO) clean -x ./...
-	rm -rvf ./.test*
-
-.PHONY: all check install clean
+test:
+	go test -v ./... -coverprofile=coverage.out
+	go tool cover -html=coverage.out -o coverage.html

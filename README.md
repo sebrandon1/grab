@@ -4,7 +4,7 @@
 
 *Downloading the internet, one goroutine at a time!*
 
-	$ go get github.com/cavaliergopher/grab/v3
+	$ go get github.com/sebrandon1/grab
 
 Grab is a Go package for downloading files from the internet with the following
 rad features:
@@ -47,7 +47,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/cavaliergopher/grab/v3"
+	"github.com/sebrandon1/grab"
 )
 
 func main() {
