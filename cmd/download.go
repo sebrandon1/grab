@@ -28,14 +28,14 @@ var downloadCmd = &cobra.Command{
 			<-resp.Done
 			if verbose {
 				if err := resp.Err(); err != nil {
-					fmt.Fprintf(os.Stderr, "Failed: %s (%v)\n", resp.Filename, err)
+					_, _ = fmt.Fprintf(os.Stderr, "Failed: %s (%v)\n", resp.Filename, err)
 				} else {
 					info := ""
 					if fi, err := os.Stat(resp.Filename); err == nil {
 						size := fi.Size()
 						info += fmt.Sprintf("size: %d bytes", size)
 					}
-					fmt.Fprintf(os.Stdout, "Downloaded: %s (%s)\n", resp.Filename, info)
+					_, _ = fmt.Fprintf(os.Stdout, "Downloaded: %s (%s)\n", resp.Filename, info)
 				}
 			}
 			if resp.Err() != nil {
