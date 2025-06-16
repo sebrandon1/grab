@@ -1,6 +1,6 @@
 module github.com/sebrandon1/grab
 
-go 1.24.4
+go 1.23
 
 require github.com/spf13/cobra v1.9.1
 
