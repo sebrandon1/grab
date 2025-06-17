@@ -3,6 +3,8 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"strings"
+	"time"
 
 	"github.com/sebrandon1/grab/lib"
 	"github.com/spf13/cobra"
@@ -25,7 +27,36 @@ var downloadCmd = &cobra.Command{
 				continue
 			}
 			resp := client.Do(req)
-			<-resp.Done
+			if verbose {
+				t := time.NewTicker(100 * time.Millisecond)
+				defer t.Stop()
+				progressDone := make(chan struct{})
+				go func() {
+					for {
+						select {
+						case <-progressDone:
+							return
+						case <-t.C:
+							size := resp.Size()
+							completed := resp.BytesComplete()
+							if size > 0 {
+								percent := float64(completed) / float64(size) * 100
+								barLen := 40
+								filledLen := int(float64(barLen) * float64(completed) / float64(size))
+								bar := "[" + strings.Repeat("=", filledLen) + strings.Repeat(" ", barLen-filledLen) + "]"
+								fmt.Printf("\rDownloading: %s %6.2f%% (%d/%d bytes)", bar, percent, completed, size)
+							} else {
+								fmt.Printf("\rDownloading: %d bytes complete", completed)
+							}
+						}
+					}
+				}()
+				<-resp.Done
+				close(progressDone)
+				fmt.Println() // Newline after progress bar
+			} else {
+				<-resp.Done
+			}
 			if verbose {
 				if err := resp.Err(); err != nil {
 					_, _ = fmt.Fprintf(os.Stderr, "Failed: %s (%v)\n", resp.Filename, err)
