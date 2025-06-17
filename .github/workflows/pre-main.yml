@@ -1,0 +1,25 @@
+name: Test Incoming Changes
+
+on:
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run tests
+        run: make test
+
+      - name: Golangci-lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          args: --timeout 10m0s

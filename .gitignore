@@ -3,3 +3,5 @@
 .idea/
 grab
 bin/
+coverage.html
+coverage.out

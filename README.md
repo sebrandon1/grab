@@ -5,7 +5,6 @@ A minimal Go CLI and library for downloading files from the internet, inspired b
 ## Features
 
 - Download files from URLs to your local directory
-- Auto-resume incomplete downloads
 - Guess filename from content header or URL path
 - Download batches of files concurrently
 - Simple, modern CLI with `grab download [url]...`
@@ -13,7 +12,7 @@ A minimal Go CLI and library for downloading files from the internet, inspired b
 
 ## Requirements
 
-- Go 1.24 or newer
+- Go 1.23 or newer
 - macOS, Linux, or Windows
 
 ## Install
@@ -42,10 +41,12 @@ Download multiple files:
 ./grab download https://example.com/file1.zip https://example.com/file2.zip
 ```
 
-Enable verbose output:
+Enable verbose output (shows a progress bar):
 
 ```
-./grab download -v https://example.com/file.zip
+$ ./grab download https://mirror.openshift.com/pub/openshift-v4/clients/ocp/4.18.3/openshift-install-mac.tar.gz -v
+Downloading: [======================================= ]  99.34% (429784057/432634124 bytes)
+Downloaded: openshift-install-mac.tar.gz (size: 432634124 bytes)
 ```
 
 ### As a Go Library
