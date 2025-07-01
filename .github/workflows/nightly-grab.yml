@@ -1,0 +1,124 @@
+name: Nightly Grab Test
+
+on:
+  schedule:
+    # Run at 2:00 AM UTC every day
+    - cron: '0 2 * * *'
+  pull_request:
+    branches:
+      - main
+  # Allow manual triggering for testing
+  workflow_dispatch:
+
+jobs:
+  nightly-test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version-file: go.mod
+      
+    - name: Build grab binary
+      run: make build
+      
+    - name: Verify binary exists
+      run: |
+        if [ ! -f "./grab" ]; then
+          echo "Binary not found!"
+          exit 1
+        fi
+        ./grab --help
+        
+    - name: Test download - Single file with verbose output
+      run: |
+        echo "Testing single file download with verbose output..."
+        ./grab download https://httpbin.org/bytes/10240 -v
+        
+    - name: Verify download
+      run: |
+        if [ ! -f "10240" ]; then
+          echo "Downloaded file not found!"
+          exit 1
+        fi
+        
+        # Check file size (should be exactly 10KB = 10240 bytes)
+        actual_size=$(wc -c < "10240")
+        expected_size=10240
+        
+        if [ "$actual_size" -ne "$expected_size" ]; then
+          echo "File size mismatch! Expected: $expected_size, Got: $actual_size"
+          exit 1
+        fi
+        
+        echo "✅ Single file download test passed!"
+        
+    - name: Test download - Multiple files
+      run: |
+        echo "Testing multiple file downloads..."
+        ./grab download https://httpbin.org/bytes/5120 https://httpbin.org/json
+        
+    - name: Verify multiple downloads
+      run: |
+        # Verify first file (5KB)
+        if [ ! -f "5120" ]; then
+          echo "First file (5120) not found!"
+          exit 1
+        fi
+        
+        actual_size=$(wc -c < "5120")
+        expected_size=5120
+        if [ "$actual_size" -ne "$expected_size" ]; then
+          echo "First file size mismatch! Expected: $expected_size, Got: $actual_size"
+          exit 1
+        fi
+        
+        # Verify second file (JSON)
+        if [ ! -f "json" ]; then
+          echo "Second file (json) not found!"
+          exit 1
+        fi
+        
+        # Verify it's valid JSON
+        if ! python3 -m json.tool json > /dev/null 2>&1; then
+          echo "Downloaded JSON file is not valid JSON!"
+          exit 1
+        fi
+        
+        echo "✅ Multiple file download test passed!"
+        
+    - name: Test hash command
+      run: |
+        echo "Testing hash functionality..."
+        
+        # Test SHA256 hash
+        ./grab hash 10240 --type sha256
+        ./grab hash json --type sha1
+        ./grab hash 5120 --type md5
+        
+        echo "✅ Hash command test passed!"
+        
+    - name: Test edge case - Invalid URL
+      run: |
+        echo "Testing error handling with invalid URL..."
+        
+        # This should fail gracefully
+        if ./grab download "not-a-valid-url"; then
+          echo "Expected download to fail for invalid URL, but it succeeded!"
+          exit 1
+        fi
+        
+        echo "✅ Error handling test passed!"
+        
+    - name: Report success
+      run: |
+        echo "🎉 All nightly tests passed successfully!"
+        echo "- Binary build: ✅"
+        echo "- Single file download: ✅" 
+        echo "- Multiple file downloads: ✅"
+        echo "- Hash functionality: ✅"
+        echo "- Error handling: ✅"
