@@ -12,7 +12,7 @@ A minimal Go CLI and library for downloading files from the internet, inspired b
 
 ## Requirements
 
-- Go 1.23 or newer
+- Go 1.25 or newer
 - macOS, Linux, or Windows
 
 ## Install
