@@ -377,13 +377,13 @@ func BenchmarkDownloadBatch_MultipleURLs(b *testing.B) {
 	ctx := context.Background()
 
 	// Use different small files from httpbin.org for realistic testing
-	urls := []string{
-		"https://httpbin.org/bytes/512",  // 512 bytes
-		"https://httpbin.org/bytes/1024", // 1KB
-		"https://httpbin.org/bytes/256",  // 256 bytes
-		"https://httpbin.org/bytes/768",  // 768 bytes
-		"https://httpbin.org/bytes/2048", // 2KB
-	}
+	urls := getWorkingURLs([][]string{
+		getFallbackURLs(512),  // 512 bytes
+		getFallbackURLs(1024), // 1KB
+		getFallbackURLs(256),  // 256 bytes
+		getFallbackURLs(768),  // 768 bytes
+		getFallbackURLs(2048), // 2KB
+	})
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

@@ -137,9 +137,9 @@ func TestClient_DoChannel(t *testing.T) {
 	reqch := make(chan *Request, 2)
 	respch := make(chan *Response, 2)
 
-	req1, _ := NewRequest("", "https://httpbin.org/bytes/256")
+	req1, _ := NewRequest("", getWorking256ByteURL())
 	req1.NoStore = true
-	req2, _ := NewRequest("", "https://httpbin.org/bytes/512")
+	req2, _ := NewRequest("", getWorking512ByteURL())
 	req2.NoStore = true
 
 	reqch <- req1
@@ -180,9 +180,9 @@ func TestClient_DoBatch(t *testing.T) {
 	}
 
 	urls := []string{
-		"https://httpbin.org/bytes/256",
-		"https://httpbin.org/bytes/512",
-		"https://httpbin.org/bytes/1024",
+		getWorking256ByteURL(),
+		getWorking512ByteURL(),
+		getWorking1024ByteURL(),
 	}
 
 	var requests []*Request
@@ -437,7 +437,7 @@ func BenchmarkClient_doHTTPRequest(b *testing.B) {
 		UserAgent:  "bench-agent",
 	}
 
-	req, _ := http.NewRequest("GET", "https://httpbin.org/bytes/256", nil)
+	req, _ := http.NewRequest("GET", getWorking256ByteURL(), nil)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
