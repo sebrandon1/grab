@@ -335,8 +335,8 @@ func BenchmarkDownloadBatch_SingleURL(b *testing.B) {
 	}
 
 	ctx := context.Background()
-	// Use httpbin.org which provides a small test file - 1KB of random bytes
-	urls := []string{"https://httpbin.org/bytes/1024"}
+	// Use fallback URLs for reliable 1KB test file
+	urls := []string{getWorking1024ByteURL()}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -376,7 +376,7 @@ func BenchmarkDownloadBatch_MultipleURLs(b *testing.B) {
 
 	ctx := context.Background()
 
-	// Use different small files from httpbin.org for realistic testing
+	// Use different small files with fallback mechanisms for reliable testing
 	urls := getWorkingURLs([][]string{
 		getFallbackURLs(512),  // 512 bytes
 		getFallbackURLs(1024), // 1KB
