@@ -1,5 +1,10 @@
 # grab
 
+[![Nightly Tests](https://github.com/sebrandon1/grab/actions/workflows/nightly-grab.yml/badge.svg)](https://github.com/sebrandon1/grab/actions/workflows/nightly-grab.yml)
+[![Pre-main Tests](https://github.com/sebrandon1/grab/actions/workflows/pre-main.yml/badge.svg)](https://github.com/sebrandon1/grab/actions/workflows/pre-main.yml)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/sebrandon1/grab)](https://github.com/sebrandon1/grab/blob/main/go.mod)
+[![License](https://img.shields.io/github/license/sebrandon1/grab)](https://github.com/sebrandon1/grab/blob/main/LICENSE)
+
 A minimal Go CLI and library for downloading files from the internet, inspired by cURL and wget.
 
 ## Features

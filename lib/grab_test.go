@@ -127,7 +127,7 @@ func TestGet_RealHTTP(t *testing.T) {
 	setupTestDirectoryWithCleanup(t, "grab_get_real_http")
 
 	dst := "httpbin_download.bin"
-	testURL := "https://httpbin.org/bytes/256"
+	testURL := getWorking256ByteURL()
 
 	resp, err := Get(dst, testURL)
 
@@ -407,8 +407,8 @@ func TestGetBatch_RealHTTP(t *testing.T) {
 	setupTestDirectoryWithCleanup(t, "grab_batch_real_http")
 
 	testURLs := []string{
-		"https://httpbin.org/bytes/256",
-		"https://httpbin.org/bytes/512",
+		getWorking256ByteURL(),
+		getWorking512ByteURL(),
 	}
 
 	dst, err := os.Getwd()
