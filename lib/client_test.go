@@ -58,7 +58,7 @@ func TestClient_Do(t *testing.T) {
 				}
 			},
 			setupRequest: func() *Request {
-				req, _ := NewRequest("", "https://httpbin.org/bytes/512")
+				req, _ := NewRequest("", getWorking512ByteURL())
 				req.NoStore = true // Store in memory to avoid file system operations
 				return req
 			},
@@ -220,7 +220,7 @@ func TestClient_DoBatch_UnlimitedWorkers(t *testing.T) {
 		UserAgent:  "test-agent",
 	}
 
-	req, _ := NewRequest("", "https://httpbin.org/bytes/512")
+	req, _ := NewRequest("", getWorking512ByteURL())
 	req.NoStore = true
 
 	// Test with workers < 1 (should create one worker per request)

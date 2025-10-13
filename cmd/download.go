@@ -15,7 +15,29 @@ var verbose bool
 var downloadCmd = &cobra.Command{
 	Use:   "download [url]...",
 	Short: "Download files from URLs",
-	Args:  cobra.MinimumNArgs(1),
+	Long: `Download files from one or more URLs to the current directory.
+
+The download command fetches files from HTTP/HTTPS URLs and saves them locally.
+File names are automatically determined from the Content-Disposition header
+or extracted from the URL path. Files are saved to the current working directory.
+
+Multiple URLs can be downloaded concurrently by providing multiple arguments.
+Use the --verbose flag to see download progress with a real-time progress bar.`,
+	Example: `  # Download a single file
+  grab download https://github.com/sebrandon1/grab/archive/refs/heads/main.zip
+
+  # Download multiple files concurrently
+  grab download https://go.dev/dl/go1.21.5.src.tar.gz https://go.dev/dl/go1.21.4.src.tar.gz
+
+  # Download with verbose progress output
+  grab download https://go.dev/dl/go1.21.5.darwin-amd64.tar.gz --verbose
+
+  # Download from a GitHub release
+  grab download https://github.com/golang/go/archive/refs/tags/go1.21.5.tar.gz
+
+  # Multiple files with progress tracking
+  grab download -v https://go.dev/dl/go1.21.5.src.tar.gz https://go.dev/dl/go1.20.12.src.tar.gz`,
+	Args: cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		client := lib.NewClient()
 		failed := 0
@@ -78,6 +100,6 @@ var downloadCmd = &cobra.Command{
 }
 
 func init() {
-	downloadCmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose output")
+	downloadCmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose output with real-time progress bar and download details")
 	rootCmd.AddCommand(downloadCmd)
 }
