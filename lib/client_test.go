@@ -3,6 +3,7 @@ package lib
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"testing"
 	"time"
@@ -47,6 +48,8 @@ func TestClient_Do(t *testing.T) {
 		setupRequest   func() *Request
 		expectComplete bool
 		expectError    bool
+		retries        int           // Number of retries for flaky network tests
+		timeout        time.Duration // Per-attempt timeout
 	}{
 		{
 			name: "successful download to memory",
@@ -64,6 +67,8 @@ func TestClient_Do(t *testing.T) {
 			},
 			expectComplete: false, // Do() returns immediately, transfer happens in background
 			expectError:    false,
+			retries:        3,                // Retry up to 3 times for network flakiness
+			timeout:        10 * time.Second, // Longer timeout for network operations
 		},
 		{
 			name: "http client error",
@@ -83,156 +88,370 @@ func TestClient_Do(t *testing.T) {
 			},
 			expectComplete: false,
 			expectError:    true,
+			retries:        1, // Mock tests don't need retries
+			timeout:        5 * time.Second,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			client := tt.setupClient()
-			req := tt.setupRequest()
+			var lastErr error
+			var success bool
 
-			resp := client.Do(req)
+			// Retry logic for flaky network tests
+			for attempt := 1; attempt <= tt.retries; attempt++ {
+				client := tt.setupClient()
+				req := tt.setupRequest()
 
-			if resp == nil {
-				t.Fatal("Do() returned nil response")
+				resp := client.Do(req)
+
+				if resp == nil {
+					lastErr = errors.New("Do() returned nil response")
+					if attempt < tt.retries {
+						t.Logf("Attempt %d/%d failed: %v, retrying...", attempt, tt.retries, lastErr)
+						time.Sleep(time.Duration(attempt) * 100 * time.Millisecond) // Progressive backoff
+						continue
+					}
+					t.Fatal(lastErr)
+				}
+
+				if resp.Request.URL().String() != req.URL().String() {
+					lastErr = errors.New("Response.Request URL does not match input request URL")
+					if attempt < tt.retries {
+						t.Logf("Attempt %d/%d failed: %v, retrying...", attempt, tt.retries, lastErr)
+						time.Sleep(time.Duration(attempt) * 100 * time.Millisecond)
+						continue
+					}
+					t.Error(lastErr)
+					return
+				}
+
+				if resp.Start.IsZero() {
+					lastErr = errors.New("Response.Start time should be set")
+					if attempt < tt.retries {
+						t.Logf("Attempt %d/%d failed: %v, retrying...", attempt, tt.retries, lastErr)
+						time.Sleep(time.Duration(attempt) * 100 * time.Millisecond)
+						continue
+					}
+					t.Error(lastErr)
+					return
+				}
+
+				if resp.Done == nil {
+					lastErr = errors.New("Response.Done channel should be initialized")
+					if attempt < tt.retries {
+						t.Logf("Attempt %d/%d failed: %v, retrying...", attempt, tt.retries, lastErr)
+						time.Sleep(time.Duration(attempt) * 100 * time.Millisecond)
+						continue
+					}
+					t.Error(lastErr)
+					return
+				}
+
+				// Wait for transfer to complete with per-attempt timeout
+				transferStart := time.Now()
+				select {
+				case <-resp.Done:
+					// Transfer completed successfully
+					success = true
+				case <-time.After(tt.timeout):
+					lastErr = fmt.Errorf("Transfer did not complete within %v timeout (attempt %d/%d)", tt.timeout, attempt, tt.retries)
+					if attempt < tt.retries {
+						t.Logf("Attempt %d/%d failed: %v, retrying...", attempt, tt.retries, lastErr)
+						time.Sleep(time.Duration(attempt) * 100 * time.Millisecond)
+						continue
+					}
+					t.Fatal(lastErr)
+				}
+
+				transferDuration := time.Since(transferStart)
+				t.Logf("Transfer completed in %v (attempt %d/%d)", transferDuration, attempt, tt.retries)
+
+				err := resp.Err()
+				if tt.expectError && err == nil {
+					lastErr = errors.New("Expected error but got none")
+					if attempt < tt.retries {
+						t.Logf("Attempt %d/%d failed: %v, retrying...", attempt, tt.retries, lastErr)
+						time.Sleep(time.Duration(attempt) * 100 * time.Millisecond)
+						continue
+					}
+					t.Error(lastErr)
+					return
+				}
+				if !tt.expectError && err != nil {
+					lastErr = fmt.Errorf("Unexpected error: %v", err)
+					if attempt < tt.retries {
+						t.Logf("Attempt %d/%d failed: %v, retrying...", attempt, tt.retries, lastErr)
+						time.Sleep(time.Duration(attempt) * 100 * time.Millisecond)
+						continue
+					}
+					t.Error(lastErr)
+					return
+				}
+
+				// If we reach here, the test passed
+				success = true
+				if attempt > 1 {
+					t.Logf("Test succeeded on attempt %d/%d", attempt, tt.retries)
+				}
+				break
 			}
 
-			if resp.Request.URL().String() != req.URL().String() {
-				t.Error("Response.Request URL does not match input request URL")
-			}
-
-			if resp.Start.IsZero() {
-				t.Error("Response.Start time should be set")
-			}
-
-			if resp.Done == nil {
-				t.Error("Response.Done channel should be initialized")
-			}
-
-			// Wait for transfer to complete
-			select {
-			case <-resp.Done:
-				// Transfer completed
-			case <-time.After(5 * time.Second):
-				t.Fatal("Transfer did not complete within timeout")
-			}
-
-			err := resp.Err()
-			if tt.expectError && err == nil {
-				t.Error("Expected error but got none")
-			}
-			if !tt.expectError && err != nil {
-				t.Errorf("Unexpected error: %v", err)
+			if !success && lastErr != nil {
+				t.Fatalf("Test failed after %d attempts, last error: %v", tt.retries, lastErr)
 			}
 		})
 	}
 }
 
 func TestClient_DoChannel(t *testing.T) {
-	client := &Client{
-		HTTPClient: DefaultClient.HTTPClient,
-		UserAgent:  "test-agent",
-	}
+	// Retry logic for network-dependent test
+	maxRetries := 3
+	var lastErr error
 
-	reqch := make(chan *Request, 2)
-	respch := make(chan *Response, 2)
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		success := t.Run(fmt.Sprintf("attempt_%d", attempt), func(t *testing.T) {
+			client := &Client{
+				HTTPClient: DefaultClient.HTTPClient,
+				UserAgent:  "test-agent",
+			}
 
-	req1, _ := NewRequest("", getWorking256ByteURL())
-	req1.NoStore = true
-	req2, _ := NewRequest("", getWorking512ByteURL())
-	req2.NoStore = true
+			reqch := make(chan *Request, 2)
+			respch := make(chan *Response, 2)
 
-	reqch <- req1
-	reqch <- req2
-	close(reqch)
+			req1, _ := NewRequest("", getWorking256ByteURL())
+			req1.NoStore = true
+			req2, _ := NewRequest("", getWorking512ByteURL())
+			req2.NoStore = true
 
-	// Run DoChannel in a goroutine
-	done := make(chan struct{})
-	go func() {
-		client.DoChannel(reqch, respch)
-		close(respch)
-		close(done)
-	}()
+			reqch <- req1
+			reqch <- req2
+			close(reqch)
 
-	responses := make([]*Response, 0)
-	for resp := range respch {
-		responses = append(responses, resp)
-	}
+			// Run DoChannel in a goroutine
+			done := make(chan struct{})
+			go func() {
+				client.DoChannel(reqch, respch)
+				close(respch)
+				close(done)
+			}()
 
-	<-done
+			// Add timeout for the entire operation
+			timeout := time.After(15 * time.Second)
+			responses := make([]*Response, 0)
 
-	if len(responses) != 2 {
-		t.Errorf("Expected 2 responses, got %d", len(responses))
-	}
+		responseLoop:
+			for {
+				select {
+				case resp, ok := <-respch:
+					if !ok {
+						break responseLoop
+					}
+					responses = append(responses, resp)
+				case <-timeout:
+					lastErr = errors.New("DoChannel test timed out after 15 seconds")
+					t.Error(lastErr)
+					return
+				}
+			}
 
-	// Verify all transfers completed
-	for i, resp := range responses {
-		if !resp.IsComplete() {
-			t.Errorf("Response %d should be complete", i)
+			<-done
+
+			if len(responses) != 2 {
+				lastErr = fmt.Errorf("Expected 2 responses, got %d", len(responses))
+				t.Error(lastErr)
+				return
+			}
+
+			// Verify all transfers completed
+			for i, resp := range responses {
+				if !resp.IsComplete() {
+					lastErr = fmt.Errorf("Response %d should be complete", i)
+					t.Error(lastErr)
+					return
+				}
+				if resp.Err() != nil {
+					lastErr = fmt.Errorf("Response %d has error: %v", i, resp.Err())
+					t.Error(lastErr)
+					return
+				}
+			}
+		})
+
+		if success {
+			if attempt > 1 {
+				t.Logf("DoChannel test succeeded on attempt %d/%d", attempt, maxRetries)
+			}
+			return // Test passed, exit retry loop
 		}
+
+		if attempt < maxRetries {
+			t.Logf("DoChannel test attempt %d/%d failed, retrying...", attempt, maxRetries)
+			time.Sleep(time.Duration(attempt) * 200 * time.Millisecond)
+		}
+	}
+
+	if lastErr != nil {
+		t.Fatalf("DoChannel test failed after %d attempts, last error: %v", maxRetries, lastErr)
 	}
 }
 
 func TestClient_DoBatch(t *testing.T) {
-	client := &Client{
-		HTTPClient: DefaultClient.HTTPClient,
-		UserAgent:  "test-agent",
-	}
+	// Retry logic for network-dependent test
+	maxRetries := 3
+	var lastErr error
 
-	urls := []string{
-		getWorking256ByteURL(),
-		getWorking512ByteURL(),
-		getWorking1024ByteURL(),
-	}
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		success := t.Run(fmt.Sprintf("attempt_%d", attempt), func(t *testing.T) {
+			client := &Client{
+				HTTPClient: DefaultClient.HTTPClient,
+				UserAgent:  "test-agent",
+			}
 
-	var requests []*Request
-	for _, url := range urls {
-		req, _ := NewRequest("", url)
-		req.NoStore = true
-		requests = append(requests, req)
-	}
+			urls := []string{
+				getWorking256ByteURL(),
+				getWorking512ByteURL(),
+				getWorking1024ByteURL(),
+			}
 
-	respch := client.DoBatch(2, requests...)
+			var requests []*Request
+			for _, url := range urls {
+				req, _ := NewRequest("", url)
+				req.NoStore = true
+				requests = append(requests, req)
+			}
 
-	responses := make([]*Response, 0)
-	for resp := range respch {
-		responses = append(responses, resp)
-	}
+			respch := client.DoBatch(2, requests...)
 
-	if len(responses) != 3 {
-		t.Errorf("Expected 3 responses, got %d", len(responses))
-	}
+			// Add timeout for the entire batch operation
+			timeout := time.After(20 * time.Second) // Longer timeout for batch operations
+			responses := make([]*Response, 0)
 
-	// Verify all transfers completed
-	for i, resp := range responses {
-		if !resp.IsComplete() {
-			t.Errorf("Response %d should be complete", i)
+		batchLoop:
+			for {
+				select {
+				case resp, ok := <-respch:
+					if !ok {
+						break batchLoop
+					}
+					responses = append(responses, resp)
+				case <-timeout:
+					lastErr = errors.New("DoBatch test timed out after 20 seconds")
+					t.Error(lastErr)
+					return
+				}
+			}
+
+			if len(responses) != 3 {
+				lastErr = fmt.Errorf("Expected 3 responses, got %d", len(responses))
+				t.Error(lastErr)
+				return
+			}
+
+			// Verify all transfers completed
+			for i, resp := range responses {
+				if !resp.IsComplete() {
+					lastErr = fmt.Errorf("Response %d should be complete", i)
+					t.Error(lastErr)
+					return
+				}
+				if resp.Err() != nil {
+					lastErr = fmt.Errorf("Response %d error: %v", i, resp.Err())
+					t.Error(lastErr)
+					return
+				}
+			}
+		})
+
+		if success {
+			if attempt > 1 {
+				t.Logf("DoBatch test succeeded on attempt %d/%d", attempt, maxRetries)
+			}
+			return // Test passed, exit retry loop
 		}
-		if resp.Err() != nil {
-			t.Errorf("Response %d error: %v", i, resp.Err())
+
+		if attempt < maxRetries {
+			t.Logf("DoBatch test attempt %d/%d failed, retrying...", attempt, maxRetries)
+			time.Sleep(time.Duration(attempt) * 200 * time.Millisecond)
 		}
+	}
+
+	if lastErr != nil {
+		t.Fatalf("DoBatch test failed after %d attempts, last error: %v", maxRetries, lastErr)
 	}
 }
 
 func TestClient_DoBatch_UnlimitedWorkers(t *testing.T) {
-	client := &Client{
-		HTTPClient: DefaultClient.HTTPClient,
-		UserAgent:  "test-agent",
+	// Retry logic for network-dependent test
+	maxRetries := 3
+	var lastErr error
+
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		success := t.Run(fmt.Sprintf("attempt_%d", attempt), func(t *testing.T) {
+			client := &Client{
+				HTTPClient: DefaultClient.HTTPClient,
+				UserAgent:  "test-agent",
+			}
+
+			req, _ := NewRequest("", getWorking512ByteURL())
+			req.NoStore = true
+
+			// Test with workers < 1 (should create one worker per request)
+			respch := client.DoBatch(0, req)
+
+			// Add timeout for the operation
+			timeout := time.After(10 * time.Second)
+			responses := make([]*Response, 0)
+
+		unlimitedLoop:
+			for {
+				select {
+				case resp, ok := <-respch:
+					if !ok {
+						break unlimitedLoop
+					}
+					responses = append(responses, resp)
+				case <-timeout:
+					lastErr = errors.New("DoBatch_UnlimitedWorkers test timed out after 10 seconds")
+					t.Error(lastErr)
+					return
+				}
+			}
+
+			if len(responses) != 1 {
+				lastErr = fmt.Errorf("Expected 1 response, got %d", len(responses))
+				t.Error(lastErr)
+				return
+			}
+
+			// Verify the transfer completed successfully
+			if !responses[0].IsComplete() {
+				lastErr = errors.New("Response should be complete")
+				t.Error(lastErr)
+				return
+			}
+			if responses[0].Err() != nil {
+				lastErr = fmt.Errorf("Response error: %v", responses[0].Err())
+				t.Error(lastErr)
+				return
+			}
+		})
+
+		if success {
+			if attempt > 1 {
+				t.Logf("DoBatch_UnlimitedWorkers test succeeded on attempt %d/%d", attempt, maxRetries)
+			}
+			return // Test passed, exit retry loop
+		}
+
+		if attempt < maxRetries {
+			t.Logf("DoBatch_UnlimitedWorkers test attempt %d/%d failed, retrying...", attempt, maxRetries)
+			time.Sleep(time.Duration(attempt) * 200 * time.Millisecond)
+		}
 	}
 
-	req, _ := NewRequest("", getWorking512ByteURL())
-	req.NoStore = true
-
-	// Test with workers < 1 (should create one worker per request)
-	respch := client.DoBatch(0, req)
-
-	responses := make([]*Response, 0)
-	for resp := range respch {
-		responses = append(responses, resp)
-	}
-
-	if len(responses) != 1 {
-		t.Errorf("Expected 1 response, got %d", len(responses))
+	if lastErr != nil {
+		t.Fatalf("DoBatch_UnlimitedWorkers test failed after %d attempts, last error: %v", maxRetries, lastErr)
 	}
 }
 
@@ -432,12 +651,16 @@ func BenchmarkNewClient(b *testing.B) {
 }
 
 func BenchmarkClient_doHTTPRequest(b *testing.B) {
+	// Use a mock client for benchmarks to avoid network variability
+	mockClient := newMockHTTPClient()
+	mockClient.addResponse("GET", "http://example.com/benchmark", createSuccessResponse("benchmark content"))
+
 	client := &Client{
-		HTTPClient: DefaultClient.HTTPClient,
+		HTTPClient: mockClient,
 		UserAgent:  "bench-agent",
 	}
 
-	req, _ := http.NewRequest("GET", getWorking256ByteURL(), nil)
+	req, _ := http.NewRequest("GET", "http://example.com/benchmark", nil)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
