@@ -11,6 +11,38 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
 
+      - name: Checkout CRC repository
+        uses: actions/checkout@v5
+        with:
+          repository: crc-org/crc
+          path: crc-repo
+
+      - name: Check Go version compatibility with CRC
+        run: |
+          echo "🔍 Checking Go version compatibility between grab and CRC repositories..."
+          
+          # Extract go version from grab's go.mod
+          grab_version=$(grep '^go ' go.mod | awk '{print $2}')
+          grab_major_minor=$(echo "$grab_version" | sed -E 's/^([0-9]+\.[0-9]+).*$/\1/')
+          
+          # Extract go version from CRC's go.mod
+          crc_version=$(grep '^go ' crc-repo/go.mod | awk '{print $2}')
+          crc_major_minor=$(echo "$crc_version" | sed -E 's/^([0-9]+\.[0-9]+).*$/\1/')
+          
+          echo "📋 Version comparison:"
+          echo "  Grab Go version: $grab_version (major.minor: $grab_major_minor)"
+          echo "  CRC Go version:  $crc_version (major.minor: $crc_major_minor)"
+          
+          # Compare major.minor versions
+          if [ "$grab_major_minor" = "$crc_major_minor" ]; then
+            echo "✅ Go versions are compatible! Both use Go $grab_major_minor"
+          else
+            echo "❌ Go version mismatch detected!"
+            echo "   Grab uses Go $grab_major_minor but CRC uses Go $crc_major_minor"
+            echo "   Please update the go version to match CRC's requirements"
+            exit 1
+          fi
+
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
