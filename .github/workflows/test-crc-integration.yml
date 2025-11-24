@@ -16,12 +16,12 @@ jobs:
     
     steps:
     - name: Checkout grab repository
-      uses: actions/checkout@v5
+      uses: actions/checkout@v6
       with:
         path: grab
         
     - name: Checkout CRC repository
-      uses: actions/checkout@v5
+      uses: actions/checkout@v6
       with:
         repository: crc-org/crc
         path: crc
