@@ -580,7 +580,7 @@ func (c *Client) closeResponse(resp *Response) stateFunc {
 	if err := resp.closeResponseBody(); err != nil {
 		// optionally log or ignore
 		resp.err = fmt.Errorf("cannot close response body for %q: %w", resp.Filename, err)
-		
+
 	}
 
 	resp.End = time.Now()

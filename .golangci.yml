@@ -1,0 +1,27 @@
+version: "2"
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - gosec
+    - misspell
+  settings:
+    gosec:
+      excludes:
+        - G304  # File path from variable (expected for download tool)
+        - G301  # Directory permissions (expected for download tool)
+        - G302  # File permissions (expected for download tool)
+        - G401  # Weak crypto (MD5/SHA1 used for checksums, not security)
+        - G501  # Blocklisted crypto import (MD5/SHA1 for checksums)
+        - G505  # Blocklisted crypto import (SHA1 for checksums)
+
+formatters:
+  enable:
+    - gofmt
+
+run:
+  timeout: 10m
