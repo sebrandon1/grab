@@ -23,12 +23,21 @@ make build
 
 # Verbose mode with progress
 ./grab download -v https://example.com/file.zip
+
+# Compute file hash
+./grab hash file.zip --type sha256
 ```
 
 ### Test
 ```bash
 go test ./...
 make test
+```
+
+### Lint and Vet
+```bash
+make vet
+make lint
 ```
 
 ## Architecture
@@ -57,7 +66,7 @@ resp, err := client.Do(lib.NewRequest("", "https://example.com/file.zip"))
 
 ## Requirements
 
-- Go 1.21+
+- Go 1.24+
 
 ## Code Style
 
