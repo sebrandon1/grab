@@ -187,15 +187,14 @@ func TestDownloadBatch_DestinationNotDirectory(t *testing.T) {
 	// Try to use the temp file (not directory) as destination
 	// We can't directly test this with the current DownloadBatch since it uses "."
 	// So we'll test GetBatch directly which is called by DownloadBatch
-	_, err = GetBatch(0, filepath.Base(tempFile.Name()), testURLs...)
+	_, err = GetBatch(context.Background(), 0, filepath.Base(tempFile.Name()), testURLs...)
 	if err == nil {
 		t.Error("Expected error when destination is not a directory")
 	}
 }
 
-func TestDownloadBatch_ContextNotUsed(t *testing.T) {
-	// This test verifies that the context parameter exists but notes that
-	// the current implementation doesn't actually use it for cancellation
+func TestDownloadBatch_ContextCanceled(t *testing.T) {
+	// This test verifies that context cancellation is respected
 
 	// Create a temporary directory
 	tempDir, err := os.MkdirTemp("", "download_context_test")
@@ -243,8 +242,6 @@ func TestDownloadBatch_ContextNotUsed(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately
 
-	// Note: Current implementation doesn't actually respect context cancellation
-	// This test documents the current behavior rather than ideal behavior
 	ch, err := DownloadBatch(ctx, []string{"http://example.com/test.txt"})
 	if err != nil {
 		t.Fatalf("DownloadBatch returned error: %v", err)
@@ -254,25 +251,34 @@ func TestDownloadBatch_ContextNotUsed(t *testing.T) {
 		t.Fatal("DownloadBatch returned nil channel")
 	}
 
-	// The download should still proceed despite cancelled context
-	// (This is current behavior - ideally it should respect context)
+	// With context cancellation now wired through, the channel should close
+	// without processing requests (or with errors on any that started).
 	var responses []DownloadResponse
 	timeout := time.NewTimer(5 * time.Second)
 	defer timeout.Stop()
 
-	select {
-	case resp := <-ch:
-		responses = append(responses, resp)
-		// Drain any remaining responses
-		for resp := range ch {
+	for {
+		select {
+		case resp, ok := <-ch:
+			if !ok {
+				goto done
+			}
 			responses = append(responses, resp)
+		case <-timeout.C:
+			t.Fatal("Timeout waiting for channel to close")
 		}
-	case <-timeout.C:
-		t.Fatal("Timeout waiting for response")
 	}
+done:
 
-	if len(responses) != 1 {
-		t.Errorf("Expected 1 response regardless of cancelled context, got %d", len(responses))
+	// With a pre-cancelled context, the batch workers should exit immediately
+	// so we expect 0 responses (the cancelled context prevents processing).
+	if len(responses) != 0 {
+		// It's acceptable to get responses with errors from context cancellation
+		for _, resp := range responses {
+			if resp.Err == nil {
+				t.Error("Expected error on response from cancelled context, got nil")
+			}
+		}
 	}
 }
 

@@ -1,6 +1,7 @@
 package lib
 
 import (
+	"context"
 	"fmt"
 	"os"
 )
@@ -41,7 +42,7 @@ func Get(dst, urlStr string) (*Response, error) {
 //
 // For control over HTTP client headers, redirect policy, and other settings,
 // create a Client instead.
-func GetBatch(workers int, dst string, urlStrs ...string) (<-chan *Response, error) {
+func GetBatch(ctx context.Context, workers int, dst string, urlStrs ...string) (<-chan *Response, error) {
 	fi, err := os.Stat(dst)
 	if err != nil {
 		return nil, err
@@ -59,6 +60,6 @@ func GetBatch(workers int, dst string, urlStrs ...string) (<-chan *Response, err
 		reqs[i] = req
 	}
 
-	ch := DefaultClient.DoBatch(workers, reqs...)
+	ch := DefaultClient.DoBatch(ctx, workers, reqs...)
 	return ch, nil
 }

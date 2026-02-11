@@ -1,6 +1,7 @@
 package lib
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -177,7 +178,7 @@ func TestGetBatch_Success(t *testing.T) {
 			t.Fatalf("Failed to get current directory: %v", err)
 		}
 
-		ch, err := GetBatch(2, dst, testURLs...)
+		ch, err := GetBatch(context.Background(), 2, dst, testURLs...)
 		if err != nil {
 			t.Fatalf("GetBatch() returned error: %v", err)
 		}
@@ -232,7 +233,7 @@ func TestGetBatch_EmptyURLs(t *testing.T) {
 		t.Fatalf("Failed to get current directory: %v", err)
 	}
 
-	ch, err := GetBatch(1, dst)
+	ch, err := GetBatch(context.Background(), 1, dst)
 	if err != nil {
 		t.Fatalf("GetBatch() with empty URLs should not return error: %v", err)
 	}
@@ -261,7 +262,7 @@ func TestGetBatch_InvalidURL(t *testing.T) {
 	}
 
 	invalidURL := "://invalid-url"
-	ch, err := GetBatch(1, dst, invalidURL)
+	ch, err := GetBatch(context.Background(), 1, dst, invalidURL)
 
 	if err == nil {
 		t.Error("GetBatch() should return error for invalid URL")
@@ -275,7 +276,7 @@ func TestGetBatch_InvalidURL(t *testing.T) {
 func TestGetBatch_DestinationNotExists(t *testing.T) {
 	nonExistentDir := "/path/that/does/not/exist"
 
-	ch, err := GetBatch(1, nonExistentDir, "http://example.com/file.txt")
+	ch, err := GetBatch(context.Background(), 1, nonExistentDir, "http://example.com/file.txt")
 
 	if err == nil {
 		t.Error("GetBatch() should return error for non-existent destination")
@@ -299,7 +300,7 @@ func TestGetBatch_DestinationNotDirectory(t *testing.T) {
 	}()
 	_ = tempFile.Close()
 
-	ch, err := GetBatch(1, tempFile.Name(), "http://example.com/file.txt")
+	ch, err := GetBatch(context.Background(), 1, tempFile.Name(), "http://example.com/file.txt")
 
 	if err == nil {
 		t.Error("GetBatch() should return error when destination is not a directory")
@@ -331,7 +332,7 @@ func TestGetBatch_MixedResults(t *testing.T) {
 			t.Fatalf("Failed to get current directory: %v", err)
 		}
 
-		ch, err := GetBatch(1, dst, testURLs...)
+		ch, err := GetBatch(context.Background(), 1, dst, testURLs...)
 		if err != nil {
 			t.Fatalf("GetBatch() returned error: %v", err)
 		}
@@ -383,7 +384,7 @@ func TestGetBatch_UnlimitedWorkers(t *testing.T) {
 		}
 
 		// Test with 0 workers (should use unlimited workers)
-		ch, err := GetBatch(0, dst, testURLs...)
+		ch, err := GetBatch(context.Background(), 0, dst, testURLs...)
 		if err != nil {
 			t.Fatalf("GetBatch() with 0 workers returned error: %v", err)
 		}
@@ -416,7 +417,7 @@ func TestGetBatch_RealHTTP(t *testing.T) {
 		t.Fatalf("Failed to get current directory: %v", err)
 	}
 
-	ch, err := GetBatch(2, dst, testURLs...)
+	ch, err := GetBatch(context.Background(), 2, dst, testURLs...)
 	if err != nil {
 		t.Fatalf("GetBatch() with real HTTP failed: %v", err)
 	}
@@ -482,7 +483,7 @@ func BenchmarkGetBatch(b *testing.B) {
 		dst, _ := os.Getwd()
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			ch, _ := GetBatch(2, dst, testURLs...)
+			ch, _ := GetBatch(context.Background(), 2, dst, testURLs...)
 			// Consume all responses
 			for range ch {
 			}
