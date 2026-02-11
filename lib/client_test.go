@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 )
@@ -231,7 +233,7 @@ func TestClient_DoChannel(t *testing.T) {
 			// Run DoChannel in a goroutine
 			done := make(chan struct{})
 			go func() {
-				client.DoChannel(reqch, respch)
+				client.DoChannel(context.Background(), reqch, respch)
 				close(respch)
 				close(done)
 			}()
@@ -321,7 +323,7 @@ func TestClient_DoBatch(t *testing.T) {
 				requests = append(requests, req)
 			}
 
-			respch := client.DoBatch(2, requests...)
+			respch := client.DoBatch(context.Background(), 2, requests...)
 
 			// Add timeout for the entire batch operation
 			timeout := time.After(20 * time.Second) // Longer timeout for batch operations
@@ -397,7 +399,7 @@ func TestClient_DoBatch_UnlimitedWorkers(t *testing.T) {
 			req.NoStore = true
 
 			// Test with workers < 1 (should create one worker per request)
-			respch := client.DoBatch(0, req)
+			respch := client.DoBatch(context.Background(), 0, req)
 
 			// Add timeout for the operation
 			timeout := time.After(10 * time.Second)
@@ -640,6 +642,175 @@ func TestClient_statFileInfo(t *testing.T) {
 				t.Error("Expected nil next state function, got non-nil")
 			}
 		})
+	}
+}
+
+func TestClient_DoChannel_ContextCanceled(t *testing.T) {
+	client := &Client{
+		HTTPClient: DefaultClient.HTTPClient,
+		UserAgent:  "test-agent",
+	}
+
+	// Create 5 requests but cancel after sending 2
+	reqch := make(chan *Request, 5)
+	respch := make(chan *Response, 5)
+
+	for i := 0; i < 5; i++ {
+		req, _ := NewRequest("", getWorking256ByteURL())
+		req.NoStore = true
+		reqch <- req
+	}
+	close(reqch)
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	done := make(chan struct{})
+	go func() {
+		client.DoChannel(ctx, reqch, respch)
+		close(done)
+	}()
+
+	// Cancel the context immediately
+	cancel()
+
+	// Wait for DoChannel to return
+	select {
+	case <-done:
+		// DoChannel returned due to context cancellation
+	case <-time.After(10 * time.Second):
+		t.Fatal("DoChannel did not return after context cancellation")
+	}
+}
+
+func TestClient_getRequest_ContentRange(t *testing.T) {
+	tests := []struct {
+		name         string
+		contentRange string
+		bytesResumed int64
+		didResume    bool
+		statusCode   int
+		expectError  bool
+	}{
+		{
+			name:         "matching content range",
+			contentRange: "bytes 100-199/200",
+			bytesResumed: 100,
+			didResume:    true,
+			statusCode:   http.StatusPartialContent,
+			expectError:  false,
+		},
+		{
+			name:         "mismatched content range",
+			contentRange: "bytes 50-199/200",
+			bytesResumed: 100,
+			didResume:    true,
+			statusCode:   http.StatusPartialContent,
+			expectError:  true,
+		},
+		{
+			name:         "missing content range header",
+			contentRange: "",
+			bytesResumed: 100,
+			didResume:    true,
+			statusCode:   http.StatusPartialContent,
+			expectError:  false,
+		},
+		{
+			name:         "not a resumed download",
+			contentRange: "bytes 50-199/200",
+			bytesResumed: 100,
+			didResume:    false,
+			statusCode:   http.StatusOK,
+			expectError:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			testURL := "http://example.com/file.txt"
+
+			// Build mock HTTP response
+			headers := make(http.Header)
+			if tt.contentRange != "" {
+				headers.Set("Content-Range", tt.contentRange)
+			}
+			body := "test content"
+			mockResp := &http.Response{
+				Status:        http.StatusText(tt.statusCode),
+				StatusCode:    tt.statusCode,
+				Proto:         "HTTP/1.1",
+				Body:          io.NopCloser(strings.NewReader(body)),
+				ContentLength: int64(len(body)),
+				Header:        headers,
+			}
+
+			mockClient := newMockHTTPClient()
+			mockClient.addResponse("GET", testURL, mockResp)
+
+			client := &Client{
+				HTTPClient: mockClient,
+				UserAgent:  "test-agent",
+			}
+
+			req, _ := NewRequest("", testURL)
+			req.NoStore = true
+
+			ctx, cancel := context.WithCancel(context.Background())
+			resp := &Response{
+				Request:      req,
+				Start:        time.Now(),
+				Done:         make(chan struct{}),
+				Filename:     req.Filename,
+				ctx:          ctx,
+				cancel:       cancel,
+				bufferSize:   1024,
+				DidResume:    tt.didResume,
+				bytesResumed: tt.bytesResumed,
+			}
+
+			nextFunc := client.getRequest(resp)
+			_ = nextFunc
+
+			if tt.expectError && resp.err == nil {
+				t.Error("Expected error for mismatched Content-Range, got nil")
+			}
+			if !tt.expectError && resp.err != nil {
+				t.Errorf("Unexpected error: %v", resp.err)
+			}
+		})
+	}
+}
+
+func TestClient_NoStore_NoFilename(t *testing.T) {
+	// Test that NoStore requests succeed even when the URL has no parseable filename
+	mockClient := newMockHTTPClient()
+	testURL := "http://example.com/"
+	content := "hello world"
+	mockClient.addResponse("GET", testURL, createSuccessResponse(content))
+
+	client := &Client{
+		HTTPClient: mockClient,
+		UserAgent:  "test-agent",
+	}
+
+	req, err := NewRequest("", testURL)
+	if err != nil {
+		t.Fatalf("Failed to create request: %v", err)
+	}
+	req.NoStore = true
+
+	resp := client.Do(req)
+	if err := resp.Err(); err != nil {
+		t.Fatalf("Expected no error for NoStore request with no filename, got: %v", err)
+	}
+
+	data, err := resp.Bytes()
+	if err != nil {
+		t.Fatalf("Failed to read response bytes: %v", err)
+	}
+
+	if string(data) != content {
+		t.Errorf("Expected content %q, got %q", content, string(data))
 	}
 }
 
