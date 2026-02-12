@@ -164,7 +164,8 @@ jobs:
           if go test $mod_flag $grab_packages -v -short; then
             echo "✅ All grab-related tests passed!"
           else
-            echo "⚠️  Some grab-related tests failed, but continuing..."
+            echo "❌ Some grab-related tests failed"
+            exit 1
           fi
         elif [ "$has_grab_usage" = "indirect" ]; then
           echo "🔍 Testing core packages for indirect grab usage:"
@@ -177,7 +178,8 @@ jobs:
           if go test $mod_flag $grab_packages -v -short; then
             echo "✅ Core package tests passed!"
           else
-            echo "⚠️  Some core package tests failed, but continuing..."
+            echo "❌ Some core package tests failed"
+            exit 1
           fi
         fi
         
@@ -229,12 +231,13 @@ jobs:
         fi
         
     - name: Test basic CRC compilation with grab changes
-      if: steps.check_dependency.outputs.grab_used == 'true'
-      continue-on-error: true  # Don't fail the workflow for CRC compilation issues
+      if: steps.check_dependency.outputs.grab_used == 'true' && steps.find_grab_packages.outputs.has_grab_usage != 'false'
       run: |
         cd crc
-        echo "🔨 Testing basic CRC compilation with grab module changes..."
-        
+        grab_packages="${{ steps.find_grab_packages.outputs.grab_packages }}"
+
+        echo "🔨 Testing CRC compilation of grab-consuming packages..."
+
         # Check if vendor directory exists
         if [ -d "vendor" ]; then
           echo "📦 Using -mod=mod to bypass vendor directory"
@@ -242,108 +245,55 @@ jobs:
         else
           mod_flag=""
         fi
-        
-        # Show project structure for debugging
-        echo "📋 CRC project structure overview:"
-        ls -la | head -10
-        echo ""
-        if [ -d "cmd" ]; then
-          echo "📁 cmd/ directory contents:"
-          ls -la cmd/ | head -5
-        fi
-        if [ -d "pkg" ]; then
-          echo "📁 pkg/ directory contents:"
-          ls -la pkg/ | head -5
-        fi
-        echo ""
-        
-        # Test compilation of main CRC packages (excluding problematic test packages)
-        echo "🏗️  Compiling core CRC packages..."
-        
-        # Find the main package - check common locations
-        main_pkg=""
-        if [ -f "cmd/crc/main.go" ]; then
-          main_pkg="./cmd/crc"
-        elif [ -f "cmd/main.go" ]; then
-          main_pkg="./cmd"
-        elif [ -f "main.go" ]; then
-          main_pkg="."
+
+        # Only compile the specific packages that import grab
+        # (avoids CRC system dependencies like gpgme, libvirt)
+        echo "🏗️  Compiling packages that use grab..."
+        for pkg in $grab_packages; do
+          echo "  Compiling: $pkg"
+        done
+
+        echo "Running: go build $mod_flag $grab_packages"
+        if go build $mod_flag $grab_packages; then
+          echo "✅ All grab-consuming packages compile successfully"
         else
-          # Search for main.go files
-          main_file=$(find . -name "main.go" -not -path "./vendor/*" -not -path "./test/*" | head -1)
-          if [ -n "$main_file" ]; then
-            main_pkg=$(dirname "$main_file")
-            echo "📍 Found main package at: $main_pkg"
-          fi
+          echo "❌ Grab-consuming packages failed to compile"
+          exit 1
         fi
-        
-        # Compile main package if found
-        if [ -n "$main_pkg" ]; then
-          echo "🔨 Compiling main CRC binary from: $main_pkg"
-          if go build $mod_flag -o /tmp/crc-test-binary "$main_pkg" 2>&1; then
-            echo "✅ Main CRC binary compiles successfully"
-            rm -f /tmp/crc-test-binary
-          else
-            echo "⚠️  Main CRC binary failed to compile"
-            echo "ℹ️  This likely indicates CRC has system dependencies (like gpgme, libvirt, etc.)"
-            echo "ℹ️  that aren't available in the CI environment. This is NOT related to grab changes."
-            echo "ℹ️  Continuing with package-level compilation tests..."
-          fi
-        else
-          echo "⚠️  No main package found, skipping main binary compilation"
-          echo "ℹ️  This may be expected if CRC has a non-standard project structure"
-        fi
-        
-        # Compile core packages  
-        echo "🔧 Compiling core packages..."
-        
-        # Try to compile packages, but don't fail the workflow for CRC system dependency issues
-        if go build $mod_flag ./pkg/... ./cmd/... 2>/dev/null; then
-          echo "✅ Core packages compile successfully"
-        else
-          echo "⚠️  Package compilation failed - checking for system dependency issues..."
-          
-          # Capture the actual error
-          build_error=$(go build $mod_flag ./pkg/... ./cmd/... 2>&1)
-          echo "🔍 Build error analysis:"
-          echo "$build_error" | head -10
-          echo ""
-          
-          # CRC commonly has system dependencies that fail in CI - this is expected
-          echo "ℹ️  CRC compilation failed in CI environment"
-          echo "ℹ️  This is typically due to missing system dependencies (gpgme, libvirt, etc.)"
-          echo "ℹ️  Since go mod replace worked and grab packages were found,"
-          echo "ℹ️  this indicates grab compatibility is working correctly"
-        fi
-        
-        echo "🎉 Basic compilation test completed (CRC system deps may fail in CI)!"
         
     - name: Validate grab functionality integration
       if: steps.check_dependency.outputs.grab_used == 'true' && steps.find_grab_packages.outputs.has_grab_usage != 'false'
-      continue-on-error: true  # Don't fail if validation issues
       run: |
         cd crc
         grab_packages="${{ steps.find_grab_packages.outputs.grab_packages }}"
-        
+
         echo "🔍 Validating grab functionality integration..."
-        
+
         # Check if vendor directory exists
         if [ -d "vendor" ]; then
           mod_flag="-mod=mod"
         else
           mod_flag=""
         fi
-        
-        # Run a quick compilation check to ensure grab interfaces are satisfied
+
+        # Run a compilation check to ensure grab interfaces are satisfied
         echo "🔧 Checking grab interface compatibility in specific packages..."
+        failed=0
         for pkg in $grab_packages; do
           echo "  Validating: $pkg"
-          if go build $mod_flag -o /dev/null "$pkg" 2>/dev/null; then
+          if go build $mod_flag -o /dev/null "$pkg"; then
             echo "    ✅ Package compiles successfully with grab changes"
           else
-            echo "    ⚠️  Compilation issues detected (may be expected for test packages)"
+            echo "    ❌ Package failed to compile with grab changes"
+            failed=1
           fi
         done
+
+        if [ "$failed" -eq 1 ]; then
+          echo "❌ Grab functionality integration validation failed"
+          exit 1
+        fi
+        echo "✅ All grab-consuming packages validated successfully"
         
     - name: Report integration test results
       if: steps.check_dependency.outputs.grab_used == 'true'
@@ -359,7 +309,7 @@ jobs:
           echo "✅ Grab-specific package discovery: Found packages using grab"
           echo "✅ Grab-related unit tests: Passed"
           echo "✅ Grab-related builds: Passed"
-          echo "✅ Basic CRC compilation: Completed (system deps may fail in CI)"
+          echo "✅ Grab-consuming CRC packages: Compiled successfully"
           echo "✅ Module replacement: Working"
           echo "✅ Vendor directory: Bypassed successfully"
           echo ""
@@ -374,7 +324,7 @@ jobs:
           echo "🔍 Indirect Usage Testing Results:"
           echo "✅ Core package testing: Passed"
           echo "✅ Core package builds: Passed"
-          echo "✅ Basic CRC compilation: Completed (system deps may fail in CI)"
+          echo "✅ Grab-consuming CRC packages: Compiled successfully"
           echo "✅ Module replacement: Working"
           echo "✅ Vendor directory: Bypassed successfully"
           echo ""
@@ -388,7 +338,6 @@ jobs:
         else
           echo "ℹ️ No grab usage detected in CRC codebase"
           echo "✅ Module replacement: Working"
-          echo "✅ Basic CRC compilation: Completed (system deps may fail in CI)"
           echo "✅ Basic compatibility: Verified"
         fi
         
@@ -396,8 +345,8 @@ jobs:
         echo "🚀 Integration Status: ✅ PASSED"
         echo "Your grab module changes are safe to use with CRC."  
         echo ""
-        echo "📝 Note: CRC compilation may fail in CI due to missing system dependencies"
-        echo "   (gpgme, libvirt, etc.) but this is unrelated to grab module changes."
+        echo "📝 Note: Only grab-consuming packages are compiled and tested."
+        echo "   Full CRC binary compilation is skipped to avoid system dependency issues."
         
     - name: Report no integration needed
       if: steps.check_dependency.outputs.grab_used == 'false'
