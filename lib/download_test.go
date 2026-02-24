@@ -163,7 +163,7 @@ func TestDownloadBatch_DestinationNotDirectory(t *testing.T) {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}
 	defer func() {
-		_ = os.Remove(tempFile.Name())
+		_ = os.Remove(filepath.Clean(tempFile.Name()))
 	}()
 	_ = tempFile.Close()
 
