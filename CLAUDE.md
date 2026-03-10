@@ -66,7 +66,7 @@ resp, err := client.Do(lib.NewRequest("", "https://example.com/file.zip"))
 
 ## Requirements
 
-- Go 1.24+
+- Go 1.25+
 
 ## Code Style
 
