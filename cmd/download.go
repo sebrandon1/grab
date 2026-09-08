@@ -17,6 +17,7 @@ var output string
 const progressBarLen = 40
 
 var verbose bool
+var retries int
 
 var downloadCmd = &cobra.Command{
 	Use:   "download [url]...",
@@ -52,6 +53,11 @@ Use the --verbose flag to see download progress with a real-time progress bar.`,
 func runDownload(cmd *cobra.Command, args []string, verbose bool) int {
 	ctx := cmd.Context()
 	out, _ := cmd.Flags().GetString("output")
+
+	if r, err := cmd.Flags().GetInt("retries"); err == nil && r > 0 {
+		lib.DefaultClient.RetryLimit = r
+		lib.DefaultClient.RetryDelay = time.Second
+	}
 
 	// For a single URL with a specific output file path (not an existing directory),
 	// bypass GetBatch and write directly to the requested path.
@@ -158,5 +164,6 @@ func runDownload(cmd *cobra.Command, args []string, verbose bool) int {
 func init() {
 	downloadCmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose output with real-time progress bar and download details")
 	downloadCmd.Flags().StringVarP(&output, "output", "o", "", "Output file path (single URL) or destination directory (multiple URLs)")
+	downloadCmd.Flags().IntVar(&retries, "retries", 0, "Number of retry attempts for transient HTTP errors (5xx, 429)")
 	rootCmd.AddCommand(downloadCmd)
 }

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -203,6 +204,122 @@ func TestClient_Do(t *testing.T) {
 				t.Fatalf("Test failed after %d attempts, last error: %v", tt.retries, lastErr)
 			}
 		})
+	}
+}
+
+// sequentialHTTPClient returns a series of HTTP responses in order.
+type sequentialHTTPClient struct {
+	mu        sync.Mutex
+	responses []*http.Response
+	idx       int
+}
+
+func (s *sequentialHTTPClient) Do(req *http.Request) (*http.Response, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	i := s.idx
+	if i >= len(s.responses) {
+		i = len(s.responses) - 1
+	}
+	s.idx++
+	return s.responses[i], nil
+}
+
+func makeResponse(statusCode int, body string) *http.Response {
+	status := fmt.Sprintf("%d %s", statusCode, http.StatusText(statusCode))
+	return &http.Response{
+		Status:        status,
+		StatusCode:    statusCode,
+		Proto:         "HTTP/1.1",
+		Body:          io.NopCloser(strings.NewReader(body)),
+		ContentLength: int64(len(body)),
+		Header:        make(http.Header),
+	}
+}
+
+func TestClient_RetryOnTransientError(t *testing.T) {
+	// Server returns 503 twice, then 200 — client with RetryLimit:2 should succeed.
+	mock := &sequentialHTTPClient{
+		responses: []*http.Response{
+			makeResponse(503, ""),
+			makeResponse(503, ""),
+			makeResponse(200, "hello retry"),
+		},
+	}
+	client := &Client{
+		HTTPClient: mock,
+		UserAgent:  "test",
+		RetryLimit: 2,
+	}
+	req, _ := NewRequest("", "http://example.com/file.txt")
+	req.NoStore = true
+
+	resp := client.Do(req)
+	select {
+	case <-resp.Done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("transfer did not complete within 5s")
+	}
+	if err := resp.Err(); err != nil {
+		t.Errorf("expected success after retries, got: %v", err)
+	}
+}
+
+func TestClient_RetryExhausted(t *testing.T) {
+	// Server always returns 503 — client with RetryLimit:2 should fail after 3 attempts.
+	mock := &sequentialHTTPClient{
+		responses: []*http.Response{
+			makeResponse(503, ""),
+			makeResponse(503, ""),
+			makeResponse(503, ""),
+		},
+	}
+	client := &Client{
+		HTTPClient: mock,
+		UserAgent:  "test",
+		RetryLimit: 2,
+	}
+	req, _ := NewRequest("", "http://example.com/file.txt")
+	req.NoStore = true
+
+	resp := client.Do(req)
+	select {
+	case <-resp.Done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("transfer did not complete within 5s")
+	}
+	if err := resp.Err(); err == nil {
+		t.Error("expected error after exhausting retries, got nil")
+	}
+}
+
+func TestClient_NoRetryOnNonTransient(t *testing.T) {
+	// 404 is not a transient error — should fail immediately with RetryLimit:3.
+	mock := &sequentialHTTPClient{
+		responses: []*http.Response{
+			makeResponse(404, "not found"),
+		},
+	}
+	client := &Client{
+		HTTPClient: mock,
+		UserAgent:  "test",
+		RetryLimit: 3,
+	}
+	req, _ := NewRequest("", "http://example.com/file.txt")
+	req.NoStore = true
+
+	resp := client.Do(req)
+	select {
+	case <-resp.Done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("transfer did not complete within 5s")
+	}
+	if err := resp.Err(); err == nil {
+		t.Error("expected error for 404, got nil")
+	}
+	// Only 1 request should have been sent (no retry on 404).
+	if mock.idx != 1 {
+		t.Errorf("expected 1 request (no retry on 404), got %d", mock.idx)
 	}
 }
 
