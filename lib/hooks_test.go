@@ -54,9 +54,17 @@ func TestBeforeCopy_ErrorCancelsDownload(t *testing.T) {
 		t.Errorf("expected errTestHook, got %v", err)
 	}
 
+	// The file is opened before BeforeCopy is called, so an empty file may
+	// exist, but no data should have been transferred into it.
 	entries, _ := os.ReadDir(dir)
-	if len(entries) != 0 {
-		t.Errorf("expected no file written when BeforeCopy errors, got %d files", len(entries))
+	for _, e := range entries {
+		info, err := e.Info()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Size() > 0 {
+			t.Errorf("BeforeCopy error: file %q should be empty, got %d bytes", e.Name(), info.Size())
+		}
 	}
 }
 
