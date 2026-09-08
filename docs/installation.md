@@ -33,7 +33,7 @@ curl -L https://github.com/sebrandon1/grab/releases/latest/download/grab-windows
 
 ## Build from Source
 
-Requirements: Go 1.24 or newer
+Requirements: Go 1.25 or newer
 
 ```bash
 git clone https://github.com/sebrandon1/grab.git

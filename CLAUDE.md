@@ -61,7 +61,14 @@ make lint
 import "github.com/sebrandon1/grab/lib"
 
 client := lib.NewClient()
-resp, err := client.Do(lib.NewRequest("", "https://example.com/file.zip"))
+req, err := lib.NewRequest(".", "https://example.com/file.zip")
+if err != nil {
+    log.Fatal(err)
+}
+resp := client.Do(req)
+if err := resp.Err(); err != nil {
+    log.Fatal(err)
+}
 ```
 
 ## Requirements

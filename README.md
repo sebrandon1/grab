@@ -35,11 +35,23 @@ grab hash file.tar.gz --type sha256
 ## Library Usage
 
 ```go
-import "github.com/sebrandon1/grab/lib"
+import (
+    "context"
+    "log"
+    "github.com/sebrandon1/grab/lib"
+)
 
+urls := []string{"https://example.com/file1.zip", "https://example.com/file2.zip"}
 ch, err := lib.DownloadBatch(context.Background(), urls)
+if err != nil {
+    log.Fatal(err)
+}
 for resp := range ch {
-    log.Printf("%s: %v", resp.Filename, resp.Err)
+    if resp.Err != nil {
+        log.Printf("failed: %s (%v)", resp.Filename, resp.Err)
+    } else {
+        log.Printf("downloaded: %s", resp.Filename)
+    }
 }
 ```
 

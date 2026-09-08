@@ -4,11 +4,15 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/sebrandon1/grab/lib"
 	"github.com/spf13/cobra"
 )
+
+const progressBarLen = 40
 
 var verbose bool
 
@@ -39,21 +43,37 @@ Use the --verbose flag to see download progress with a real-time progress bar.`,
   grab download -v https://go.dev/dl/go1.21.5.src.tar.gz https://go.dev/dl/go1.20.12.src.tar.gz`,
 	Args: cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		client := lib.NewClient()
-		failed := 0
-		for _, url := range args {
-			req, err := lib.NewRequest(".", url)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Invalid URL: %s (%v)\n", url, err)
-				failed++
-				continue
-			}
-			resp := client.Do(req)
-			if verbose {
+		os.Exit(runDownload(cmd, args, verbose))
+	},
+}
+
+func runDownload(cmd *cobra.Command, args []string, verbose bool) int {
+	ctx := cmd.Context()
+	respCh, err := lib.GetBatch(ctx, 0, ".", args...)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+
+	multiFile := len(args) > 1
+	var wg sync.WaitGroup
+	var failed atomic.Int32
+
+	for resp := range respCh {
+		resp := resp
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			switch {
+			case verbose && !multiFile:
 				t := time.NewTicker(100 * time.Millisecond)
-				defer t.Stop()
 				progressDone := make(chan struct{})
+				goroutineDone := make(chan struct{})
 				go func() {
+					defer close(goroutineDone)
+					defer t.Stop()
+					var lastCompleted int64
 					for {
 						select {
 						case <-progressDone:
@@ -61,11 +81,14 @@ Use the --verbose flag to see download progress with a real-time progress bar.`,
 						case <-t.C:
 							size := resp.Size()
 							completed := resp.BytesComplete()
+							if completed == lastCompleted {
+								continue
+							}
+							lastCompleted = completed
 							if size > 0 {
 								percent := float64(completed) / float64(size) * 100
-								barLen := 40
-								filledLen := int(float64(barLen) * float64(completed) / float64(size))
-								bar := "[" + strings.Repeat("=", filledLen) + strings.Repeat(" ", barLen-filledLen) + "]"
+								filledLen := int(float64(progressBarLen) * float64(completed) / float64(size))
+								bar := "[" + strings.Repeat("=", filledLen) + strings.Repeat(" ", progressBarLen-filledLen) + "]"
 								fmt.Printf("\rDownloading: %s %6.2f%% (%d/%d bytes)", bar, percent, completed, size)
 							} else {
 								fmt.Printf("\rDownloading: %d bytes complete", completed)
@@ -75,28 +98,26 @@ Use the --verbose flag to see download progress with a real-time progress bar.`,
 				}()
 				<-resp.Done
 				close(progressDone)
-				fmt.Println() // Newline after progress bar
-			} else {
+				<-goroutineDone
+				fmt.Println()
+			case verbose && multiFile:
+				fmt.Printf("Downloading %s...\n", resp.Filename)
+				<-resp.Done
+			default:
 				<-resp.Done
 			}
-			if verbose {
-				if err := resp.Err(); err != nil {
-					_, _ = fmt.Fprintf(os.Stderr, "Failed: %s (%v)\n", resp.Filename, err)
-				} else {
-					info := ""
-					if fi, err := os.Stat(resp.Filename); err == nil {
-						size := fi.Size()
-						info += fmt.Sprintf("size: %d bytes", size)
-					}
-					_, _ = fmt.Fprintf(os.Stdout, "Downloaded: %s (%s)\n", resp.Filename, info)
-				}
+
+			if err := resp.Err(); err != nil {
+				fmt.Fprintf(os.Stderr, "Failed: %s (%v)\n", resp.Filename, err)
+				failed.Add(1)
+			} else if verbose {
+				fmt.Printf("Downloaded: %s (size: %d bytes)\n", resp.Filename, resp.BytesComplete())
 			}
-			if resp.Err() != nil {
-				failed++
-			}
-		}
-		os.Exit(failed)
-	},
+		}()
+	}
+
+	wg.Wait()
+	return int(failed.Load())
 }
 
 func init() {
