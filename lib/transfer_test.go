@@ -393,8 +393,62 @@ func TestTransfer_BPS_NoGauge(t *testing.T) {
 
 	transfer := newTransfer(ctx, nil, dst, src, nil)
 
+	// Before any copy, gauge has no samples — BPS should be 0.
 	if transfer.BPS() != 0 {
-		t.Errorf("BPS() should return 0 when no gauge, got %f", transfer.BPS())
+		t.Errorf("BPS() before copy should return 0, got %f", transfer.BPS())
+	}
+}
+
+func TestBPSGauge_TwoSamples(t *testing.T) {
+	g := newBPSGauge(5 * time.Second)
+	now := time.Now()
+	g.Sample(now, 0)
+	g.Sample(now.Add(time.Second), 1000)
+	bps := g.BPS()
+	if bps != 1000 {
+		t.Errorf("expected 1000 BPS, got %f", bps)
+	}
+}
+
+func TestBPSGauge_OneSample(t *testing.T) {
+	g := newBPSGauge(5 * time.Second)
+	g.Sample(time.Now(), 500)
+	if g.BPS() != 0 {
+		t.Errorf("BPS() with one sample should return 0, got %f", g.BPS())
+	}
+}
+
+func TestBPSGauge_WindowPrune(t *testing.T) {
+	g := newBPSGauge(time.Second)
+	now := time.Now()
+	g.Sample(now, 0)
+	g.Sample(now.Add(500*time.Millisecond), 500)
+	// This sample is 2s later; the 500ms sample is pruned as it's outside the window.
+	g.Sample(now.Add(2*time.Second), 2000)
+	// Only two samples remain after pruning: the 500ms one is in window relative to 2s?
+	// cutoff = 2s - 1s = 1s, so 0ms and 500ms samples are pruned, leaving only the 2s sample.
+	// With one sample remaining, BPS should be 0.
+	if g.BPS() != 0 {
+		t.Errorf("expected 0 BPS after pruning to one sample, got %f", g.BPS())
+	}
+}
+
+func TestTransfer_BPS_AfterCopy(t *testing.T) {
+	ctx := context.Background()
+	data := strings.Repeat("x", 64*1024) // 64 KiB
+	src := strings.NewReader(data)
+	dst := &bytes.Buffer{}
+
+	tr := newTransfer(ctx, nil, dst, src, nil)
+	if _, err := tr.copy(); err != nil {
+		t.Fatalf("copy failed: %v", err)
+	}
+	// With enough data, the gauge should have at least one sample after copy.
+	// BPS may still be 0 if only one chunk was written (single sample).
+	// We just verify it doesn't panic and returns a non-negative value.
+	bps := tr.BPS()
+	if bps < 0 {
+		t.Errorf("BPS() should be non-negative, got %f", bps)
 	}
 }
 
