@@ -12,6 +12,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var output string
+
 const progressBarLen = 40
 
 var verbose bool
@@ -49,7 +51,40 @@ Use the --verbose flag to see download progress with a real-time progress bar.`,
 
 func runDownload(cmd *cobra.Command, args []string, verbose bool) int {
 	ctx := cmd.Context()
-	respCh, err := lib.GetBatch(ctx, 0, ".", args...)
+	out, _ := cmd.Flags().GetString("output")
+
+	// For a single URL with a specific output file path (not an existing directory),
+	// bypass GetBatch and write directly to the requested path.
+	if out != "" && len(args) == 1 {
+		fi, statErr := os.Stat(out)
+		if statErr != nil || !fi.IsDir() {
+			req, reqErr := lib.NewRequest(out, args[0])
+			if reqErr != nil {
+				fmt.Fprintln(os.Stderr, reqErr)
+				return 1
+			}
+			resp := lib.DefaultClient.Do(req)
+			if verbose {
+				fmt.Printf("Downloading %s...\n", args[0])
+			}
+			<-resp.Done
+			if err := resp.Err(); err != nil {
+				fmt.Fprintf(os.Stderr, "Failed: %s (%v)\n", resp.Filename, err)
+				return 1
+			}
+			if verbose {
+				fmt.Printf("Downloaded: %s (size: %d bytes)\n", resp.Filename, resp.BytesComplete())
+			}
+			return 0
+		}
+	}
+
+	dst := "."
+	if out != "" {
+		dst = out
+	}
+
+	respCh, err := lib.GetBatch(ctx, 0, dst, args...)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
@@ -122,5 +157,6 @@ func runDownload(cmd *cobra.Command, args []string, verbose bool) int {
 
 func init() {
 	downloadCmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose output with real-time progress bar and download details")
+	downloadCmd.Flags().StringVarP(&output, "output", "o", "", "Output file path (single URL) or destination directory (multiple URLs)")
 	rootCmd.AddCommand(downloadCmd)
 }

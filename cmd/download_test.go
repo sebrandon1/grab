@@ -18,6 +18,13 @@ func newTestCmd() *cobra.Command {
 	return cmd
 }
 
+func newTestCmdWithOutput(outputPath string) *cobra.Command {
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+	cmd.Flags().StringP("output", "o", outputPath, "")
+	return cmd
+}
+
 // chdirTemp switches the process working directory to a fresh temp dir for the
 // duration of t and restores it on cleanup.
 func chdirTemp(t *testing.T) string {
@@ -161,5 +168,38 @@ func TestRunDownload_VerboseMultiFile(t *testing.T) {
 	}
 	if len(entries) != 2 {
 		t.Fatalf("expected 2 files, got %d", len(entries))
+	}
+}
+
+func TestRunDownload_OutputFile(t *testing.T) {
+	srv := serveFile(t, "hello output", "ignored.bin")
+	defer srv.Close()
+	dir := t.TempDir()
+	outPath := filepath.Join(dir, "custom.bin")
+
+	code := runDownload(newTestCmdWithOutput(outPath), []string{srv.URL}, false)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d", code)
+	}
+	data, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("expected output file at %s: %v", outPath, err)
+	}
+	if string(data) != "hello output" {
+		t.Errorf("unexpected content: %q", data)
+	}
+}
+
+func TestRunDownload_OutputDirectory(t *testing.T) {
+	srv := serveFile(t, "hello dir", "dirfile.bin")
+	defer srv.Close()
+	dir := t.TempDir()
+
+	code := runDownload(newTestCmdWithOutput(dir), []string{srv.URL}, false)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d", code)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "dirfile.bin")); err != nil {
+		t.Errorf("expected dirfile.bin in output dir: %v", err)
 	}
 }
