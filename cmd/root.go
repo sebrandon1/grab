@@ -60,45 +60,50 @@ Output format matches common checksum tools: hash followed by filename.`,
   grab hash main.zip --type sha256`,
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		file := args[0]
-		hashType, _ := cmd.Flags().GetString("type")
-		f, err := os.Open(file)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to open file: %v\n", err)
-			os.Exit(1)
-		}
-		defer func() {
-			_ = f.Close()
-		}()
-		var sum []byte
-		switch strings.ToLower(hashType) {
-		case "sha256":
-			hash := sha256.New()
-			if _, err := io.Copy(hash, f); err != nil {
-				fmt.Fprintf(os.Stderr, "Failed to hash file: %v\n", err)
-				os.Exit(1)
-			}
-			sum = hash.Sum(nil)
-		case "sha1":
-			hash := sha1.New()
-			if _, err := io.Copy(hash, f); err != nil {
-				fmt.Fprintf(os.Stderr, "Failed to hash file: %v\n", err)
-				os.Exit(1)
-			}
-			sum = hash.Sum(nil)
-		case "md5":
-			hash := md5.New()
-			if _, err := io.Copy(hash, f); err != nil {
-				fmt.Fprintf(os.Stderr, "Failed to hash file: %v\n", err)
-				os.Exit(1)
-			}
-			sum = hash.Sum(nil)
-		default:
-			fmt.Fprintf(os.Stderr, "Unknown hash type: %s\n", hashType)
-			os.Exit(1)
-		}
-		fmt.Printf("%s  %s\n", hex.EncodeToString(sum), file)
+		os.Exit(runHash(cmd, args))
 	},
+}
+
+func runHash(cmd *cobra.Command, args []string) int {
+	file := args[0]
+	hashType, _ := cmd.Flags().GetString("type")
+	f, err := os.Open(file)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to open file: %v\n", err)
+		return 1
+	}
+	defer func() {
+		_ = f.Close()
+	}()
+	var sum []byte
+	switch strings.ToLower(hashType) {
+	case "sha256":
+		hash := sha256.New()
+		if _, err := io.Copy(hash, f); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to hash file: %v\n", err)
+			return 1
+		}
+		sum = hash.Sum(nil)
+	case "sha1":
+		hash := sha1.New()
+		if _, err := io.Copy(hash, f); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to hash file: %v\n", err)
+			return 1
+		}
+		sum = hash.Sum(nil)
+	case "md5":
+		hash := md5.New()
+		if _, err := io.Copy(hash, f); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to hash file: %v\n", err)
+			return 1
+		}
+		sum = hash.Sum(nil)
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown hash type: %s\n", hashType)
+		return 1
+	}
+	fmt.Printf("%s  %s\n", hex.EncodeToString(sum), file)
+	return 0
 }
 
 func init() {
