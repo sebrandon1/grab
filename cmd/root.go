@@ -4,6 +4,7 @@ import (
 	"crypto/md5"
 	"crypto/sha1"
 	"crypto/sha256"
+	"crypto/sha512"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -44,7 +45,7 @@ var hashCmd = &cobra.Command{
 	Short: "Compute and print the hash of a file",
 	Long: `Compute and print the cryptographic hash of a file.
 
-Supports multiple hash algorithms including MD5, SHA1, and SHA256 (default).
+Supports multiple hash algorithms including MD5, SHA1, SHA256 (default), and SHA512.
 Output format matches common checksum tools: hash followed by filename.`,
 	Example: `  # Compute SHA256 hash (default)
   grab hash main.zip
@@ -91,6 +92,13 @@ func runHash(cmd *cobra.Command, args []string) int {
 			return 1
 		}
 		sum = hash.Sum(nil)
+	case "sha512":
+		hash := sha512.New()
+		if _, err := io.Copy(hash, f); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to hash file: %v\n", err)
+			return 1
+		}
+		sum = hash.Sum(nil)
 	case "md5":
 		hash := md5.New()
 		if _, err := io.Copy(hash, f); err != nil {
@@ -107,7 +115,7 @@ func runHash(cmd *cobra.Command, args []string) int {
 }
 
 func init() {
-	hashCmd.Flags().StringP("type", "t", "sha256", "Hash algorithm to use (sha256, sha1, md5)")
+	hashCmd.Flags().StringP("type", "t", "sha256", "Hash algorithm to use (sha256, sha1, sha512, md5)")
 	rootCmd.AddCommand(hashCmd)
 }
 
