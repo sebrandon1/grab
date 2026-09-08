@@ -4,6 +4,7 @@ import (
 	"crypto/md5"
 	"crypto/sha1"
 	"crypto/sha256"
+	"crypto/sha512"
 	"encoding/hex"
 	"io"
 	"os"
@@ -90,6 +91,19 @@ func TestHashCmd_MD5(t *testing.T) {
 	want := hex.EncodeToString(h[:]) + "  " + path
 	if out != want {
 		t.Errorf("md5\ngot:  %s\nwant: %s", out, want)
+	}
+}
+
+func TestHashCmd_SHA512(t *testing.T) {
+	path := writeHashTestFile(t)
+	out, code := runHashCapture(t, newHashCmd("sha512"), path)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d", code)
+	}
+	h := sha512.Sum512([]byte(hashTestContent))
+	want := hex.EncodeToString(h[:]) + "  " + path
+	if out != want {
+		t.Errorf("sha512\ngot:  %s\nwant: %s", out, want)
 	}
 }
 
