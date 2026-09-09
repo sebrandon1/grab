@@ -15,7 +15,9 @@ Download one or more files from URLs. Multiple URLs are fetched concurrently.
 
 | Flag | Short | Default | Description |
 |------|-------|---------|-------------|
-| `--verbose` | `-v` | false | Show real-time progress bar and download summary |
+| `--verbose` | `-v` | false | Show real-time progress bar (single URL) or start/completion messages (multiple URLs) |
+| `--output` | `-o` | — | Output file path (single URL) or destination directory (multiple URLs) |
+| `--retries` | — | `0` | Number of retry attempts for transient HTTP errors (5xx, 429) |
 
 ### Single file
 
@@ -51,7 +53,7 @@ Compute file hashes to verify integrity.
 
 | Flag | Short | Default | Accepted values |
 |------|-------|---------|-----------------|
-| `--type` | `-t` | `sha256` | `sha256`, `sha1`, `md5` |
+| `--type` | `-t` | `sha256` | `sha256`, `sha512`, `sha1`, `md5` |
 
 ```bash
 # SHA-256 (default)
@@ -59,6 +61,9 @@ grab hash myfile.tar.gz
 
 # Explicit SHA-256
 grab hash myfile.tar.gz --type sha256
+
+# SHA-512
+grab hash myfile.tar.gz -t sha512
 
 # MD5
 grab hash myfile.tar.gz -t md5

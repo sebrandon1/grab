@@ -9,7 +9,7 @@ Thank you for your interest in contributing to Grab! This document provides guid
 1. Fork the repository on GitHub
 2. Clone your fork locally:
    ```bash
-   git clone https://github.com/YOUR_USERNAME/grab.git
+   git clone https://github.com/<YOUR_USERNAME>/grab.git
    cd grab
    ```
 3. Add the upstream remote:

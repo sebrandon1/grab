@@ -52,13 +52,16 @@ make lint
 - Automatic filename detection from Content-Disposition headers
 - Concurrent multi-file downloads
 - Real-time progress tracking (verbose mode)
-- Built-in hash computation (MD5, SHA1, SHA256)
+- Built-in hash computation (MD5, SHA1, SHA256, SHA512)
 - Usable as Go library or standalone CLI
 
 ## Library Usage
 
 ```go
-import "github.com/sebrandon1/grab/lib"
+import (
+    "log"
+    "github.com/sebrandon1/grab/lib"
+)
 
 client := lib.NewClient()
 req, err := lib.NewRequest(".", "https://example.com/file.zip")

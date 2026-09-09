@@ -12,7 +12,7 @@ A minimal Go CLI and library for downloading files from the internet, inspired b
 - Download files from URLs with automatic filename detection
 - Concurrent multi-file downloads
 - Real-time progress tracking with verbose mode
-- Built-in file hash computation (MD5, SHA1, SHA256)
+- Built-in file hash computation (MD5, SHA1, SHA256, SHA512)
 - Usable as a Go library or standalone binary
 
 ## Quick Start
@@ -25,7 +25,7 @@ chmod +x grab
 # Download a file
 grab download https://example.com/file.tar.gz
 
-# Download multiple files concurrently with progress
+# Download multiple files concurrently (prints start/completion per file)
 grab download -v https://example.com/a.tar.gz https://example.com/b.tar.gz
 
 # Verify file integrity
