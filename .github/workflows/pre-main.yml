@@ -36,11 +36,11 @@ jobs:
           echo "  CRC Go version:  $crc_version (major.minor: $crc_major_minor)"
           
           # Compare major.minor versions
-          if [ "$grab_major_minor" = "$crc_major_minor" ]; then
-            echo "✅ Go versions are compatible! Both use Go $grab_major_minor"
+          if [ "$(printf '%s\n' "$crc_major_minor" "$grab_major_minor" | sort -V | head -n1)" = "$crc_major_minor" ]; then
+            echo "✅ Go versions are compatible! Grab's Go $grab_major_minor satisfies CRC's Go $crc_major_minor requirement"
           else
             echo "❌ Go version mismatch detected!"
-            echo "   Grab uses Go $grab_major_minor but CRC uses Go $crc_major_minor"
+            echo "   Grab uses older Go $grab_major_minor but CRC requires Go $crc_major_minor"
             echo "   Please update the go version to match CRC's requirements"
             exit 1
           fi
