@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -24,6 +25,13 @@ func newTestCmdWithOutput(outputPath string) *cobra.Command {
 	cmd := &cobra.Command{}
 	cmd.SetContext(context.Background())
 	cmd.Flags().StringP("output", "o", outputPath, "")
+	return cmd
+}
+
+func newTestCmdWithLimitRate(value string) *cobra.Command {
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+	cmd.Flags().String("limit-rate", value, "")
 	return cmd
 }
 
@@ -192,6 +200,34 @@ func TestRunDownload_OutputFile(t *testing.T) {
 	}
 }
 
+func TestRunDownload_OutputFileInvalidURL(t *testing.T) {
+	dir := t.TempDir()
+	outPath := filepath.Join(dir, "custom.bin")
+
+	code := runDownload(newTestCmdWithOutput(outPath), []string{"://not-a-url"}, false)
+	if code != 1 {
+		t.Fatalf("expected exit 1 for invalid URL with --output, got %d", code)
+	}
+	if _, err := os.Stat(outPath); !os.IsNotExist(err) {
+		t.Errorf("expected no output file, stat err: %v", err)
+	}
+}
+
+func TestRunDownload_OutputFileFailedURL(t *testing.T) {
+	srv := serve404(t)
+	defer srv.Close()
+	dir := t.TempDir()
+	outPath := filepath.Join(dir, "custom.bin")
+
+	code := runDownload(newTestCmdWithOutput(outPath), []string{srv.URL + "/missing.bin"}, false)
+	if code != 1 {
+		t.Fatalf("expected exit 1 for failed download with --output, got %d", code)
+	}
+	if _, err := os.Stat(outPath); !os.IsNotExist(err) {
+		t.Errorf("expected no output file after failure, stat err: %v", err)
+	}
+}
+
 func TestRunDownload_OutputDirectory(t *testing.T) {
 	srv := serveFile(t, "hello dir", "dirfile.bin")
 	defer srv.Close()
@@ -268,6 +304,46 @@ func TestRunDownload_ChecksumInvalidValue(t *testing.T) {
 	}
 }
 
+func TestParseByteRate(t *testing.T) {
+	cases := []struct {
+		in      string
+		want    int64
+		wantErr bool
+	}{
+		{"100", 100, false},
+		{"1k", 1024, false},
+		{"1K", 1024, false},
+		{"500k", 500 * 1024, false},
+		{"2m", 2 * 1024 * 1024, false},
+		{"2M", 2 * 1024 * 1024, false},
+		{"", 0, true},
+		{"abc", 0, true},
+		{"10x", 0, true},
+		{"-5", 0, true},
+		{"0", 0, true},
+		{"99999999999999999999", 0, true},
+		{"17592186044417m", 0, true},
+		{"9223372036854775807m", 0, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.in, func(t *testing.T) {
+			got, err := parseByteRate(tc.in)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("parseByteRate(%q) = %d, expected error", tc.in, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseByteRate(%q) unexpected error: %v", tc.in, err)
+			}
+			if got != tc.want {
+				t.Errorf("parseByteRate(%q) = %d, want %d", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestRunDownload_ChecksumMultipleURLs(t *testing.T) {
 	chdirTemp(t)
 	sum := sha256.Sum256([]byte("x"))
@@ -309,5 +385,114 @@ func TestRunDownload_ChecksumWithOutput(t *testing.T) {
 	}
 	if string(data) != content {
 		t.Errorf("unexpected content: %q", data)
+	}
+}
+
+func TestRunDownload_LimitRateInvalid(t *testing.T) {
+	chdirTemp(t)
+
+	code := runDownload(newTestCmdWithLimitRate("not-a-rate"), []string{"http://example.com/file.bin"}, false)
+	if code != 1 {
+		t.Fatalf("expected exit 1 for invalid --limit-rate, got %d", code)
+	}
+}
+
+func TestRunDownload_LimitRateInvalidURL(t *testing.T) {
+	chdirTemp(t)
+
+	code := runDownload(newTestCmdWithLimitRate("100k"), []string{"://not-a-url"}, false)
+	if code != 1 {
+		t.Fatal("expected non-zero exit code for invalid URL with --limit-rate")
+	}
+}
+
+// The shared limiter paces transfers after its 64KB burst is consumed, so a
+// 256KB payload at 128KB/s takes ~1.5s. Only a loose lower bound is asserted
+// to stay robust on loaded CI runners.
+func TestRunDownload_LimitRate(t *testing.T) {
+	srv := serveFile(t, strings.Repeat("x", 256*1024), "limited.bin")
+	defer srv.Close()
+	chdirTemp(t)
+
+	start := time.Now()
+	code := runDownload(newTestCmdWithLimitRate("128k"), []string{srv.URL}, false)
+	elapsed := time.Since(start)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d", code)
+	}
+	if elapsed < time.Second {
+		t.Errorf("expected rate-limited download to take >= 1s, took %v", elapsed)
+	}
+}
+
+func TestRunDownload_LimitRateWithOutput(t *testing.T) {
+	srv := serveFile(t, strings.Repeat("x", 128*1024), "ignored.bin")
+	defer srv.Close()
+	dir := t.TempDir()
+	outPath := filepath.Join(dir, "limited.bin")
+
+	start := time.Now()
+	cmd := newTestCmdWithOutput(outPath)
+	cmd.Flags().String("limit-rate", "64k", "")
+	code := runDownload(cmd, []string{srv.URL}, false)
+	elapsed := time.Since(start)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d", code)
+	}
+	if elapsed < 500*time.Millisecond {
+		t.Errorf("expected rate-limited download to take >= 500ms, took %v", elapsed)
+	}
+}
+
+func TestRunDownload_OutputDirectoryMissing(t *testing.T) {
+	srv := serveFile(t, "a", "a.bin")
+	defer srv.Close()
+	dir := t.TempDir()
+
+	code := runDownload(newTestCmdWithOutput(filepath.Join(dir, "missing")), []string{srv.URL, srv.URL}, false)
+	if code != 1 {
+		t.Fatalf("expected exit 1 for missing output directory, got %d", code)
+	}
+}
+
+func TestRunDownload_OutputNotDirectory(t *testing.T) {
+	srv := serveFile(t, "a", "a.bin")
+	defer srv.Close()
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "plain-file")
+
+	if err := os.WriteFile(filePath, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	code := runDownload(newTestCmdWithOutput(filePath), []string{srv.URL, srv.URL}, false)
+	if code != 1 {
+		t.Fatalf("expected exit 1 for output path that is not a directory, got %d", code)
+	}
+}
+
+// Two concurrent 96KB transfers share one 64k limiter: (192KB - 64KB burst) /
+// 64KB/s = 2s. The lower bound also fails if the limiter were accidentally
+// per-request, which would finish in ~0.5s.
+func TestRunDownload_LimitRateMultipleURLs(t *testing.T) {
+	srv1 := serveFile(t, strings.Repeat("a", 96*1024), "multi1.bin")
+	defer srv1.Close()
+	srv2 := serveFile(t, strings.Repeat("b", 96*1024), "multi2.bin")
+	defer srv2.Close()
+	dir := chdirTemp(t)
+
+	start := time.Now()
+	code := runDownload(newTestCmdWithLimitRate("64k"), []string{srv1.URL, srv2.URL}, false)
+	elapsed := time.Since(start)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d", code)
+	}
+	if elapsed < 1500*time.Millisecond {
+		t.Errorf("expected aggregate-limited downloads to take >= 1.5s, took %v", elapsed)
+	}
+	for _, name := range []string{"multi1.bin", "multi2.bin"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+			t.Errorf("expected %s on disk: %v", name, err)
+		}
 	}
 }
