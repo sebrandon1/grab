@@ -1,6 +1,10 @@
 package cmd
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -43,6 +47,9 @@ Use the --verbose flag to see download progress with a real-time progress bar.`,
   # Download from a GitHub release
   grab download https://github.com/golang/go/archive/refs/tags/go1.21.5.tar.gz
 
+  # Download and verify a SHA-256 checksum
+  grab download --sha256 <64-char-hex> https://example.com/file.tar.gz
+
   # Multiple files with progress tracking
   grab download -v https://go.dev/dl/go1.21.5.src.tar.gz https://go.dev/dl/go1.20.12.src.tar.gz`,
 	Args: cobra.MinimumNArgs(1),
@@ -54,6 +61,7 @@ Use the --verbose flag to see download progress with a real-time progress bar.`,
 func runDownload(cmd *cobra.Command, args []string, verbose bool) int {
 	ctx := cmd.Context()
 	out, _ := cmd.Flags().GetString("output")
+	sumHex, _ := cmd.Flags().GetString("sha256")
 
 	if r, err := cmd.Flags().GetInt("retries"); err == nil && r > 0 {
 		lib.DefaultClient.RetryLimit = r
@@ -64,29 +72,17 @@ func runDownload(cmd *cobra.Command, args []string, verbose bool) int {
 		lib.DefaultClient.SetTimeout(timeout)
 	}
 
+	// Checksum-verified download: single URL only, manual request so the
+	// checksum can be attached (GetBatch does not support per-request options).
+	if sumHex != "" {
+		return runChecksumDownload(ctx, args, verbose, out, sumHex)
+	}
+
 	// For a single URL with a specific output file path (not an existing directory),
 	// bypass GetBatch and write directly to the requested path.
 	if out != "" && len(args) == 1 {
-		fi, statErr := os.Stat(out)
-		if statErr != nil || !fi.IsDir() {
-			req, reqErr := lib.NewRequest(out, args[0])
-			if reqErr != nil {
-				fmt.Fprintln(os.Stderr, reqErr)
-				return 1
-			}
-			resp := lib.DefaultClient.Do(req)
-			if verbose {
-				fmt.Printf("Downloading %s...\n", args[0])
-			}
-			<-resp.Done
-			if err := resp.Err(); err != nil {
-				fmt.Fprintf(os.Stderr, "Failed: %s (%v)\n", resp.Filename, err)
-				return 1
-			}
-			if verbose {
-				fmt.Printf("Downloaded: %s (size: %d bytes)\n", resp.Filename, resp.BytesComplete())
-			}
-			return 0
+		if fi, statErr := os.Stat(out); statErr != nil || !fi.IsDir() {
+			return downloadSingle(ctx, out, args[0], nil, verbose)
 		}
 	}
 
@@ -166,10 +162,58 @@ func runDownload(cmd *cobra.Command, args []string, verbose bool) int {
 	return int(failed.Load())
 }
 
+func runChecksumDownload(ctx context.Context, args []string, verbose bool, out, sumHex string) int {
+	if len(args) != 1 {
+		fmt.Fprintln(os.Stderr, "--sha256 requires exactly one URL")
+		return 1
+	}
+	sum, err := hex.DecodeString(sumHex)
+	if err != nil || len(sum) != sha256.Size {
+		fmt.Fprintf(os.Stderr, "--sha256 must be a %d-character hex string\n", 2*sha256.Size)
+		return 1
+	}
+	return downloadSingle(ctx, out, args[0], sum, verbose)
+}
+
+func downloadSingle(ctx context.Context, dst, url string, sum []byte, verbose bool) int {
+	req, err := lib.NewRequest(dst, url)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	if sum != nil {
+		req.SetChecksum(sha256.New(), sum, true)
+	}
+	req = req.WithContext(ctx)
+
+	resp := lib.DefaultClient.Do(req)
+	if verbose {
+		fmt.Printf("Downloading %s...\n", url)
+	}
+	<-resp.Done
+	if err := resp.Err(); err != nil {
+		if errors.Is(err, lib.ErrBadChecksum) {
+			fmt.Fprintf(os.Stderr, "Failed: %s (checksum mismatch; file deleted, verify the --sha256 value)\n", resp.Filename)
+		} else {
+			fmt.Fprintf(os.Stderr, "Failed: %s (%v)\n", resp.Filename, err)
+		}
+		return 1
+	}
+	if verbose {
+		verified := ""
+		if sum != nil {
+			verified = ", sha256 verified"
+		}
+		fmt.Printf("Downloaded: %s (size: %d bytes%s)\n", resp.Filename, resp.BytesComplete(), verified)
+	}
+	return 0
+}
+
 func init() {
 	downloadCmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose output with real-time progress bar and download details")
 	downloadCmd.Flags().StringVarP(&output, "output", "o", "", "Output file path (single URL) or destination directory (multiple URLs)")
 	downloadCmd.Flags().IntVar(&retries, "retries", 0, "Number of retry attempts for transient HTTP errors (5xx, 429)")
 	downloadCmd.Flags().DurationVar(&timeout, "timeout", 0, "Network phase timeout (dial, TLS handshake, response headers), e.g. 30s (0 = no timeout)")
+	downloadCmd.Flags().String("sha256", "", "Verify the download against a hex-encoded SHA-256 checksum; on mismatch the file is deleted (single URL only)")
 	rootCmd.AddCommand(downloadCmd)
 }

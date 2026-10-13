@@ -28,6 +28,9 @@ grab download https://example.com/file.tar.gz
 # Download multiple files concurrently (prints start/completion per file)
 grab download -v https://example.com/a.tar.gz https://example.com/b.tar.gz
 
+# Download and verify a SHA-256 checksum in one step
+grab download --sha256 <sha256-hex> https://example.com/file.tar.gz
+
 # Verify file integrity
 grab hash file.tar.gz --type sha256
 ```

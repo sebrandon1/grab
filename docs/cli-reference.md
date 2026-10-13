@@ -19,6 +19,7 @@ Download one or more files from URLs. Multiple URLs are fetched concurrently.
 | `--output` | `-o` | — | Output file path (single URL) or destination directory (multiple URLs) |
 | `--retries` | — | `0` | Number of retry attempts for transient HTTP errors (5xx, 429) |
 | `--timeout` | — | `0s` | Network phase timeout (dial, TLS handshake, response headers), e.g. `30s`. Does not limit total transfer time. `0` disables |
+| `--sha256` | — | — | Verify the download against a hex-encoded SHA-256 checksum; on mismatch the file is deleted and the command exits 1 (single URL only) |
 
 ### Single file
 
@@ -45,6 +46,17 @@ Example output:
 Downloading: [======================================= ]  99.34% (135728945/136421772 bytes)
 Downloaded: main.zip (size: 136421772 bytes)
 ```
+
+### Checksum-verified download
+
+```bash
+grab download --sha256 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
+             https://example.com/file.tar.gz
+```
+
+Downloads the file and verifies its SHA-256. On mismatch the downloaded file
+is deleted and the command exits 1. Requires exactly one URL; can be combined
+with `--output`.
 
 ## Hash
 

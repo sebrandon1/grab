@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -201,5 +203,111 @@ func TestRunDownload_OutputDirectory(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, "dirfile.bin")); err != nil {
 		t.Errorf("expected dirfile.bin in output dir: %v", err)
+	}
+}
+
+func newTestCmdWithSHA256(sumHex string) *cobra.Command {
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+	cmd.Flags().String("sha256", sumHex, "")
+	return cmd
+}
+
+func TestRunDownload_ChecksumSuccess(t *testing.T) {
+	content := "hello checksum"
+	srv := serveFile(t, content, "checksum-ok.bin")
+	defer srv.Close()
+	dir := chdirTemp(t)
+
+	sum := sha256.Sum256([]byte(content))
+
+	code := runDownload(newTestCmdWithSHA256(hex.EncodeToString(sum[:])), []string{srv.URL}, false)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d", code)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "checksum-ok.bin")); err != nil {
+		t.Errorf("expected checksum-ok.bin on disk: %v", err)
+	}
+}
+
+func TestRunDownload_ChecksumMismatch(t *testing.T) {
+	content := "hello checksum"
+	srv := serveFile(t, content, "checksum-bad.bin")
+	defer srv.Close()
+	dir := chdirTemp(t)
+
+	badSum := sha256.Sum256([]byte("different content"))
+
+	code := runDownload(newTestCmdWithSHA256(hex.EncodeToString(badSum[:])), []string{srv.URL}, false)
+	if code != 1 {
+		t.Fatalf("expected exit 1 on checksum mismatch, got %d", code)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "checksum-bad.bin")); !os.IsNotExist(err) {
+		t.Errorf("expected checksum-bad.bin to be deleted on mismatch, stat err: %v", err)
+	}
+}
+
+func TestRunDownload_ChecksumInvalidValue(t *testing.T) {
+	cases := []struct {
+		name string
+		sum  string
+	}{
+		{"too short", "abcd"},
+		{"not hex", strings.Repeat("z", 2*sha256.Size)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			chdirTemp(t)
+
+			// The URL is never contacted: validation must fail before any request.
+			code := runDownload(newTestCmdWithSHA256(tc.sum), []string{"http://example.com/file.bin"}, false)
+			if code != 1 {
+				t.Errorf("expected exit 1 for %q, got %d", tc.sum, code)
+			}
+		})
+	}
+}
+
+func TestRunDownload_ChecksumMultipleURLs(t *testing.T) {
+	chdirTemp(t)
+	sum := sha256.Sum256([]byte("x"))
+
+	code := runDownload(newTestCmdWithSHA256(hex.EncodeToString(sum[:])), []string{"http://a.example/f.bin", "http://b.example/f.bin"}, false)
+	if code != 1 {
+		t.Fatalf("expected exit 1 for --sha256 with multiple URLs, got %d", code)
+	}
+}
+
+func TestRunDownload_ChecksumInvalidURL(t *testing.T) {
+	chdirTemp(t)
+	sum := sha256.Sum256([]byte("x"))
+
+	code := runDownload(newTestCmdWithSHA256(hex.EncodeToString(sum[:])), []string{"://not-a-url"}, false)
+	if code != 1 {
+		t.Fatal("expected non-zero exit code for invalid URL with --sha256")
+	}
+}
+
+func TestRunDownload_ChecksumWithOutput(t *testing.T) {
+	content := "hello checksum output"
+	srv := serveFile(t, content, "ignored.bin")
+	defer srv.Close()
+	dir := t.TempDir()
+	outPath := filepath.Join(dir, "custom-checksum.bin")
+
+	sum := sha256.Sum256([]byte(content))
+
+	cmd := newTestCmdWithOutput(outPath)
+	cmd.Flags().String("sha256", hex.EncodeToString(sum[:]), "")
+	code := runDownload(cmd, []string{srv.URL}, false)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d", code)
+	}
+	data, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("expected output file at %s: %v", outPath, err)
+	}
+	if string(data) != content {
+		t.Errorf("unexpected content: %q", data)
 	}
 }
