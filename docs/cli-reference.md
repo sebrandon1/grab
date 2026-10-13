@@ -18,6 +18,7 @@ Download one or more files from URLs. Multiple URLs are fetched concurrently.
 | `--verbose` | `-v` | false | Show real-time progress bar (single URL) or start/completion messages (multiple URLs) |
 | `--output` | `-o` | — | Output file path (single URL) or destination directory (multiple URLs) |
 | `--retries` | — | `0` | Number of retry attempts for transient HTTP errors (5xx, 429) |
+| `--timeout` | — | `0s` | Network phase timeout (dial, TLS handshake, response headers), e.g. `30s`. Does not limit total transfer time. `0` disables |
 
 ### Single file
 

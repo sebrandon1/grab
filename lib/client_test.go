@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -321,6 +322,74 @@ func TestClient_NoRetryOnNonTransient(t *testing.T) {
 	if mock.idx != 1 {
 		t.Errorf("expected 1 request (no retry on 404), got %d", mock.idx)
 	}
+}
+
+func TestClient_SetTimeout(t *testing.T) {
+	// Server accepts the connection but never writes response headers.
+	// With a 100ms response-header timeout the transfer must fail quickly
+	// instead of hanging forever.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+
+	client := NewClient()
+	client.SetTimeout(100 * time.Millisecond)
+
+	req, _ := NewRequest("", srv.URL)
+	req.NoStore = true
+
+	start := time.Now()
+	resp := client.Do(req)
+	select {
+	case <-resp.Done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("transfer did not complete within 5s")
+	}
+	if err := resp.Err(); err == nil {
+		t.Fatal("expected timeout error from hanging server, got nil")
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Errorf("expected failure within ~100ms, took %v", elapsed)
+	}
+}
+
+func TestClient_SetTimeout_MockHTTPClient(t *testing.T) {
+	// SetTimeout must degrade gracefully (no panic, no-op) when the
+	// HTTPClient is not a *http.Client backed by a *http.Transport.
+	mock := &sequentialHTTPClient{
+		responses: []*http.Response{
+			makeResponse(200, "hello"),
+		},
+	}
+	client := &Client{
+		HTTPClient: mock,
+		UserAgent:  "test",
+	}
+	client.SetTimeout(time.Second)
+
+	req, _ := NewRequest("", "http://example.com/file.txt")
+	req.NoStore = true
+
+	resp := client.Do(req)
+	select {
+	case <-resp.Done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("transfer did not complete within 5s")
+	}
+	if err := resp.Err(); err != nil {
+		t.Errorf("expected success despite SetTimeout no-op, got: %v", err)
+	}
+}
+
+func TestClient_SetTimeout_NilTransport(t *testing.T) {
+	// SetTimeout must also no-op safely when HTTPClient is a *http.Client
+	// whose Transport is not a *http.Transport (nil here).
+	client := &Client{
+		HTTPClient: &http.Client{},
+		UserAgent:  "test",
+	}
+	client.SetTimeout(time.Second)
 }
 
 func TestClient_DoChannel(t *testing.T) {

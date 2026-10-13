@@ -18,6 +18,7 @@ const progressBarLen = 40
 
 var verbose bool
 var retries int
+var timeout time.Duration
 
 var downloadCmd = &cobra.Command{
 	Use:   "download [url]...",
@@ -57,6 +58,10 @@ func runDownload(cmd *cobra.Command, args []string, verbose bool) int {
 	if r, err := cmd.Flags().GetInt("retries"); err == nil && r > 0 {
 		lib.DefaultClient.RetryLimit = r
 		lib.DefaultClient.RetryDelay = time.Second
+	}
+
+	if timeout > 0 {
+		lib.DefaultClient.SetTimeout(timeout)
 	}
 
 	// For a single URL with a specific output file path (not an existing directory),
@@ -165,5 +170,6 @@ func init() {
 	downloadCmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose output with real-time progress bar and download details")
 	downloadCmd.Flags().StringVarP(&output, "output", "o", "", "Output file path (single URL) or destination directory (multiple URLs)")
 	downloadCmd.Flags().IntVar(&retries, "retries", 0, "Number of retry attempts for transient HTTP errors (5xx, 429)")
+	downloadCmd.Flags().DurationVar(&timeout, "timeout", 0, "Network phase timeout (dial, TLS handshake, response headers), e.g. 30s (0 = no timeout)")
 	rootCmd.AddCommand(downloadCmd)
 }
