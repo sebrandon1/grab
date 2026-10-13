@@ -20,8 +20,6 @@ import (
 	"golang.org/x/time/rate"
 )
 
-var output string
-
 const progressBarLen = 40
 
 // rateLimitBurst is the shared limiter's token-bucket burst: a download can
@@ -35,7 +33,6 @@ const rateLimitBurst = 64 * 1024
 const rateLimitBufferSize = 4 * 1024
 
 var verbose bool
-var retries int
 var timeout time.Duration
 
 var downloadCmd = &cobra.Command{
@@ -93,6 +90,7 @@ func runDownload(cmd *cobra.Command, args []string, verbose bool) int {
 	sumHex, _ := cmd.Flags().GetString("sha256")
 	limitRate, _ := cmd.Flags().GetString("limit-rate")
 	urlFile, _ := cmd.Flags().GetString("file")
+	retryDelay, _ := cmd.Flags().GetDuration("retry-delay")
 
 	if urlFile != "" {
 		urls, err := readURLs(urlFile)
@@ -113,8 +111,8 @@ func runDownload(cmd *cobra.Command, args []string, verbose bool) int {
 
 	if r, err := cmd.Flags().GetInt("retries"); err == nil && r > 0 {
 		lib.DefaultClient.RetryLimit = r
-		lib.DefaultClient.RetryDelay = time.Second
 	}
+	lib.DefaultClient.RetryDelay = retryDelay
 
 	if timeout > 0 {
 		lib.DefaultClient.SetTimeout(timeout)
@@ -369,11 +367,12 @@ func uniqueURLs(urls []string) []string {
 
 func init() {
 	downloadCmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose output with real-time progress bar and download details")
-	downloadCmd.Flags().StringVarP(&output, "output", "o", "", "Output file path (single URL) or destination directory (multiple URLs)")
-	downloadCmd.Flags().IntVar(&retries, "retries", 0, "Number of retry attempts for transient HTTP errors (5xx, 429)")
+	downloadCmd.Flags().StringP("output", "o", "", "Output file path (single URL) or destination directory (multiple URLs)")
+	downloadCmd.Flags().Int("retries", 0, "Number of retry attempts for transient HTTP errors (5xx, 429)")
 	downloadCmd.Flags().DurationVar(&timeout, "timeout", 0, "Network phase timeout (dial, TLS handshake, response headers), e.g. 30s (0 = no timeout)")
 	downloadCmd.Flags().String("sha256", "", "Verify the download against a hex-encoded SHA-256 checksum; on mismatch the file is deleted (single URL only)")
 	downloadCmd.Flags().String("limit-rate", "", "Limit download rate, e.g. 200k or 2m (caps aggregate throughput across concurrent downloads)")
 	downloadCmd.Flags().StringP("file", "f", "", "Read URLs from a file, one per line (blank lines and # comments ignored); appended to any positional URLs")
+	downloadCmd.Flags().Duration("retry-delay", time.Second, "Delay between retry attempts; after a 429, a server's Retry-After header may extend the wait (capped at 5 minutes)")
 	rootCmd.AddCommand(downloadCmd)
 }

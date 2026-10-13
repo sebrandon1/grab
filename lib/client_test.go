@@ -392,6 +392,144 @@ func TestClient_SetTimeout_NilTransport(t *testing.T) {
 	client.SetTimeout(time.Second)
 }
 
+func TestRetryAfter(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+		want  time.Duration
+		ok    bool
+	}{
+		{"absent", "", 0, false},
+		{"seconds", "30", 30 * time.Second, true},
+		{"zero seconds", "0", 0, true},
+		{"at cap", "300", 300 * time.Second, true},
+		{"over cap", "301", 0, false},
+		{"negative seconds", "-5", 0, false},
+		{"overflowing seconds", "10000000000", 0, false},
+		{"garbage", "soon", 0, false},
+		{"http-date", time.Now().Add(30 * time.Second).UTC().Format(http.TimeFormat), 30 * time.Second, true},
+		{"past http-date", time.Now().Add(-time.Minute).UTC().Format(http.TimeFormat), 0, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := make(http.Header)
+			if tt.value != "" {
+				h.Set("Retry-After", tt.value)
+			}
+			got, ok := retryAfter(h)
+			if ok != tt.ok {
+				t.Fatalf("ok = %v, want %v", ok, tt.ok)
+			}
+			if !tt.ok {
+				return
+			}
+			// HTTP-dates are truncated to whole seconds, so allow slack.
+			diff := got - tt.want
+			if diff < 0 {
+				diff = -diff
+			}
+			if diff > time.Second {
+				t.Errorf("got %v, want ~%v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestClient_RetryAfterHeader(t *testing.T) {
+	// After a 429, the retry waits out the server's Retry-After when it is
+	// usable and longer than RetryDelay; otherwise RetryDelay is the floor.
+	tests := []struct {
+		name       string
+		header     string
+		retryDelay time.Duration
+		minElapsed time.Duration
+	}{
+		{"longer than delay", "1", 10 * time.Millisecond, time.Second},
+		{"shorter than delay", "0", 250 * time.Millisecond, 250 * time.Millisecond},
+		{"unparseable", "soon", 250 * time.Millisecond, 250 * time.Millisecond},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rateLimited := makeResponse(429, "")
+			rateLimited.Header.Set("Retry-After", tt.header)
+			mock := &sequentialHTTPClient{
+				responses: []*http.Response{
+					rateLimited,
+					makeResponse(200, "hello"),
+				},
+			}
+			client := &Client{
+				HTTPClient: mock,
+				UserAgent:  "test",
+				RetryLimit: 1,
+				RetryDelay: tt.retryDelay,
+			}
+			req, _ := NewRequest("", "http://example.com/file.txt")
+			req.NoStore = true
+
+			start := time.Now()
+			resp := client.Do(req)
+			select {
+			case <-resp.Done:
+			case <-time.After(5 * time.Second):
+				t.Fatal("transfer did not complete within 5s")
+			}
+			if err := resp.Err(); err != nil {
+				t.Fatalf("expected success after retry, got: %v", err)
+			}
+			if elapsed := time.Since(start); elapsed < tt.minElapsed {
+				t.Errorf("expected retry to wait at least %v, completed in %v", tt.minElapsed, elapsed)
+			}
+		})
+	}
+}
+
+func TestClient_RetryDelayCanceledByContext(t *testing.T) {
+	// A canceled context must abort the retry delay immediately instead of
+	// waiting out the full RetryDelay.
+	mock := &sequentialHTTPClient{
+		responses: []*http.Response{
+			makeResponse(503, ""),
+			makeResponse(503, ""),
+			makeResponse(503, ""),
+		},
+	}
+	client := &Client{
+		HTTPClient: mock,
+		UserAgent:  "test",
+		RetryLimit: 2,
+		RetryDelay: 30 * time.Second,
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	req, _ := NewRequest("", "http://example.com/file.txt")
+	req.NoStore = true
+	req = req.WithContext(ctx)
+
+	// Cancel while the first retry delay is in flight.
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		cancel()
+	}()
+
+	start := time.Now()
+	resp := client.Do(req)
+	select {
+	case <-resp.Done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("transfer did not complete within 5s")
+	}
+	err := resp.Err()
+	if err == nil {
+		t.Fatal("expected error from canceled context, got nil")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("expected context.Canceled, got: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Errorf("cancellation took %v; expected abort well before the 30s delay", elapsed)
+	}
+}
+
 func TestClient_DoChannel(t *testing.T) {
 	// Retry logic for network-dependent test
 	maxRetries := 3

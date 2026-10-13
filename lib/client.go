@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -51,7 +52,9 @@ type Client struct {
 	// (no retries).
 	RetryLimit int
 
-	// RetryDelay specifies the duration to wait between retry attempts.
+	// RetryDelay specifies the duration to wait between retry attempts. It is
+	// the minimum delay: after a 429 response, a server's Retry-After header
+	// (capped at 5 minutes) is honored instead when it asks for longer.
 	// Default: 0 (no delay).
 	RetryDelay time.Duration
 }
@@ -431,16 +434,57 @@ func isTransientStatusCode(code int) bool {
 	return false
 }
 
+// retryAfterCap bounds the delay honored from a server's Retry-After header,
+// so a hostile or buggy value cannot stall the transfer indefinitely.
+const retryAfterCap = 5 * time.Minute
+
+// retryAfter parses the Retry-After header (RFC 9110 §10.2.3): either a
+// number of seconds or an HTTP-date. It reports false if the header is
+// absent, unparseable, in the past, or beyond retryAfterCap.
+func retryAfter(h http.Header) (time.Duration, bool) {
+	v := h.Get("Retry-After")
+	if v == "" {
+		return 0, false
+	}
+	var d time.Duration
+	if secs, err := strconv.Atoi(v); err == nil {
+		d = time.Duration(secs) * time.Second
+	} else if date, err := http.ParseTime(v); err == nil {
+		d = time.Until(date)
+	} else {
+		return 0, false
+	}
+	if d < 0 || d > retryAfterCap {
+		return 0, false
+	}
+	return d, true
+}
+
 func (c *Client) getRequest(resp *Response) stateFunc {
 	for attempt := 0; attempt <= c.RetryLimit; attempt++ {
 		if attempt > 0 {
-			if resp.HTTPResponse != nil && resp.HTTPResponse.Body != nil {
-				_ = resp.HTTPResponse.Body.Close()
-				resp.HTTPResponse = nil
+			delay := c.RetryDelay
+			if resp.HTTPResponse != nil {
+				// Capture Retry-After from the previous 429 response before
+				// the response is closed and cleared for the next attempt.
+				if resp.HTTPResponse.StatusCode == http.StatusTooManyRequests {
+					if ra, ok := retryAfter(resp.HTTPResponse.Header); ok && ra > delay {
+						delay = ra
+					}
+				}
+				if resp.HTTPResponse.Body != nil {
+					_ = resp.HTTPResponse.Body.Close()
+					resp.HTTPResponse = nil
+				}
 			}
 			resp.err = nil
-			if c.RetryDelay > 0 {
-				time.Sleep(c.RetryDelay)
+			if delay > 0 {
+				select {
+				case <-resp.ctx.Done():
+					resp.err = resp.ctx.Err()
+					return c.closeResponse
+				case <-time.After(delay):
+				}
 			}
 		}
 
