@@ -21,6 +21,7 @@ Download one or more files from URLs. Multiple URLs are fetched concurrently.
 | `--timeout` | — | `0s` | Network phase timeout (dial, TLS handshake, response headers), e.g. `30s`. Does not limit total transfer time. `0` disables |
 | `--sha256` | — | — | Verify the download against a hex-encoded SHA-256 checksum; on mismatch the file is deleted and the command exits 1 (single URL only) |
 | `--limit-rate` | — | — | Limit download rate, e.g. `200k` or `2m`; caps aggregate throughput across concurrent downloads |
+| `--file` | `-f` | — | Read URLs from a file, one per line (blank lines and `#` comments ignored); appended to positional URLs; duplicate URLs are downloaded once |
 
 ### Single file
 
@@ -33,6 +34,16 @@ grab download https://github.com/sebrandon1/grab/archive/refs/heads/main.zip
 ```bash
 grab download https://github.com/sebrandon1/grab/archive/refs/heads/main.zip \
              https://github.com/sebrandon1/grab/archive/refs/tags/v1.0.0.zip
+```
+
+### Download URLs from a file
+
+```bash
+# urls.txt: one URL per line; blank lines and # comments are ignored
+grab download -f urls.txt
+
+# Combine with positional URLs (all downloaded concurrently)
+grab download https://example.com/extra.zip -f urls.txt
 ```
 
 ### Verbose progress output

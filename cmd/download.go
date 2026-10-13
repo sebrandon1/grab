@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -46,8 +47,10 @@ The download command fetches files from HTTP/HTTPS URLs and saves them locally.
 File names are automatically determined from the Content-Disposition header
 or extracted from the URL path. Files are saved to the current working directory.
 
-Multiple URLs can be downloaded concurrently by providing multiple arguments.
-Use the --verbose flag to see download progress with a real-time progress bar.`,
+Multiple URLs can be downloaded concurrently by providing multiple arguments,
+or read from a file with --file (one URL per line, blank lines and # comments
+ignored). Duplicate URLs are downloaded once. Use the --verbose flag to see
+download progress with a real-time progress bar.`,
 	Example: `  # Download a single file
   grab download https://github.com/sebrandon1/grab/archive/refs/heads/main.zip
 
@@ -66,9 +69,19 @@ Use the --verbose flag to see download progress with a real-time progress bar.`,
   # Cap download rate at 200 KB/s
   grab download --limit-rate 200k https://go.dev/dl/go1.21.5.src.tar.gz
 
+  # Download every URL listed in a file (one per line, # comments ignored)
+  grab download -f urls.txt
+
   # Multiple files with progress tracking
   grab download -v https://go.dev/dl/go1.21.5.src.tar.gz https://go.dev/dl/go1.20.12.src.tar.gz`,
-	Args: cobra.MinimumNArgs(1),
+	// Cobra validates Args before Run, so zero positional URLs is only
+	// allowed when --file was given.
+	Args: func(cmd *cobra.Command, args []string) error {
+		if len(args) == 0 && !cmd.Flags().Changed("file") {
+			return fmt.Errorf("requires at least one URL or a --file")
+		}
+		return nil
+	},
 	Run: func(cmd *cobra.Command, args []string) {
 		os.Exit(runDownload(cmd, args, verbose))
 	},
@@ -79,6 +92,24 @@ func runDownload(cmd *cobra.Command, args []string, verbose bool) int {
 	out, _ := cmd.Flags().GetString("output")
 	sumHex, _ := cmd.Flags().GetString("sha256")
 	limitRate, _ := cmd.Flags().GetString("limit-rate")
+	urlFile, _ := cmd.Flags().GetString("file")
+
+	if urlFile != "" {
+		urls, err := readURLs(urlFile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed to read URL file: %v\n", err)
+			return 1
+		}
+		args = append(args, urls...)
+	}
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, "no URLs provided")
+		return 1
+	}
+
+	// Duplicate URLs would become concurrent transfers racing to write the
+	// same output file; keep only the first occurrence of each.
+	args = uniqueURLs(args)
 
 	if r, err := cmd.Flags().GetInt("retries"); err == nil && r > 0 {
 		lib.DefaultClient.RetryLimit = r
@@ -298,6 +329,44 @@ func applyRateLimit(req *lib.Request, limiter *rate.Limiter) {
 	req.BufferSize = rateLimitBufferSize
 }
 
+// readURLs reads a download URL list from path: one URL per line, with
+// blank lines and #-prefixed comment lines ignored.
+func readURLs(path string) ([]string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+
+	var urls []string
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		urls = append(urls, line)
+	}
+	if err := sc.Err(); err != nil {
+		return nil, err
+	}
+	return urls, nil
+}
+
+// uniqueURLs returns urls with duplicates removed, preserving first-seen order.
+func uniqueURLs(urls []string) []string {
+	seen := make(map[string]struct{}, len(urls))
+	uniq := make([]string, 0, len(urls))
+	for _, u := range urls {
+		if _, dup := seen[u]; dup {
+			continue
+		}
+		seen[u] = struct{}{}
+		uniq = append(uniq, u)
+	}
+	return uniq
+}
+
 func init() {
 	downloadCmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose output with real-time progress bar and download details")
 	downloadCmd.Flags().StringVarP(&output, "output", "o", "", "Output file path (single URL) or destination directory (multiple URLs)")
@@ -305,5 +374,6 @@ func init() {
 	downloadCmd.Flags().DurationVar(&timeout, "timeout", 0, "Network phase timeout (dial, TLS handshake, response headers), e.g. 30s (0 = no timeout)")
 	downloadCmd.Flags().String("sha256", "", "Verify the download against a hex-encoded SHA-256 checksum; on mismatch the file is deleted (single URL only)")
 	downloadCmd.Flags().String("limit-rate", "", "Limit download rate, e.g. 200k or 2m (caps aggregate throughput across concurrent downloads)")
+	downloadCmd.Flags().StringP("file", "f", "", "Read URLs from a file, one per line (blank lines and # comments ignored); appended to any positional URLs")
 	rootCmd.AddCommand(downloadCmd)
 }
