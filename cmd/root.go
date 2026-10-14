@@ -122,6 +122,14 @@ func init() {
 	rootCmd.AddCommand(hashCmd)
 }
 
+// SetVersionInfo wires build metadata into the root command's --version
+// output. Cobra only registers the --version flag once Version is non-empty,
+// so this must be called before Execute.
+func SetVersionInfo(version, commit, date string) {
+	rootCmd.Version = version
+	rootCmd.SetVersionTemplate(fmt.Sprintf("%s version %s (commit %s, built %s)\n", rootCmd.Name(), version, commit, date))
+}
+
 // shutdownSignals lists the signals that cancel in-flight downloads. Windows
 // never delivers SIGTERM, but the constant compiles on every platform, so no
 // build tags are needed.

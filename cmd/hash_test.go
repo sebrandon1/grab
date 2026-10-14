@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/hex"
-	"io"
 	"os"
 	"strings"
 	"testing"
@@ -26,20 +25,10 @@ func newHashCmd(hashType string) *cobra.Command {
 // runHashCapture calls runHash and captures its stdout output.
 func runHashCapture(t *testing.T, cmd *cobra.Command, path string) (output string, exitCode int) {
 	t.Helper()
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	orig := os.Stdout
-	os.Stdout = w
-
-	exitCode = runHash(cmd, []string{path})
-
-	_ = w.Close()
-	os.Stdout = orig
-
-	b, _ := io.ReadAll(r)
-	return strings.TrimRight(string(b), "\n"), exitCode
+	out, exitCode := captureStdout(t, func() int {
+		return runHash(cmd, []string{path})
+	})
+	return strings.TrimRight(out, "\n"), exitCode
 }
 
 func writeHashTestFile(t *testing.T) string {
