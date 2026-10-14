@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sebrandon1/grab/lib"
 	"github.com/spf13/cobra"
 )
 
@@ -636,5 +637,48 @@ func TestDownloadCmdArgs(t *testing.T) {
 	}
 	if err := downloadCmd.Args(downloadCmd, []string{"http://example.com"}); err != nil {
 		t.Errorf("expected no error with positional URL: %v", err)
+	}
+}
+
+// The --retries and --retry-delay flags must reach lib.DefaultClient before
+// any transfer starts: a 429 is retried after the configured delay.
+func TestRunDownload_RetriesWithRetryDelay(t *testing.T) {
+	var gets atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && gets.Add(1) == 1 {
+			w.Header().Set("Retry-After", "0")
+			http.Error(w, "rate limited", http.StatusTooManyRequests)
+			return
+		}
+		w.Header().Set("Content-Disposition", `attachment; filename="retry.bin"`)
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer srv.Close()
+	dir := chdirTemp(t)
+
+	cmd := newTestCmd()
+	cmd.Flags().Int("retries", 1, "")
+	cmd.Flags().Duration("retry-delay", 50*time.Millisecond, "")
+	// runDownload configures the shared lib.DefaultClient; restore it so the
+	// retry settings do not leak into later tests.
+	origLimit, origDelay := lib.DefaultClient.RetryLimit, lib.DefaultClient.RetryDelay
+	t.Cleanup(func() {
+		lib.DefaultClient.RetryLimit, lib.DefaultClient.RetryDelay = origLimit, origDelay
+	})
+
+	start := time.Now()
+	code := runDownload(cmd, []string{srv.URL}, false)
+	elapsed := time.Since(start)
+	if code != 0 {
+		t.Fatalf("expected exit 0 after retrying the 429, got %d", code)
+	}
+	if n := gets.Load(); n != 2 {
+		t.Errorf("expected exactly 2 GETs (429 + retry), got %d", n)
+	}
+	if elapsed < 50*time.Millisecond {
+		t.Errorf("expected the retry to wait out the 50ms --retry-delay, retried after %v", elapsed)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "retry.bin")); err != nil {
+		t.Errorf("expected retry.bin on disk: %v", err)
 	}
 }

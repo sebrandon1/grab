@@ -22,6 +22,7 @@ Download one or more files from URLs. Multiple URLs are fetched concurrently.
 | `--sha256` | — | — | Verify the download against a hex-encoded SHA-256 checksum; on mismatch the file is deleted and the command exits 1 (single URL only) |
 | `--limit-rate` | — | — | Limit download rate, e.g. `200k` or `2m`; caps aggregate throughput across concurrent downloads |
 | `--file` | `-f` | — | Read URLs from a file, one per line (blank lines and `#` comments ignored); appended to positional URLs; duplicate URLs are downloaded once |
+| `--retry-delay` | — | `1s` | Delay between retry attempts; after a 429, a server's `Retry-After` header may extend the wait (capped at 5 minutes) |
 
 ### Single file
 
