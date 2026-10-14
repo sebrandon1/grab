@@ -119,6 +119,14 @@ func init() {
 	rootCmd.AddCommand(hashCmd)
 }
 
+// SetVersionInfo wires build metadata into the root command's --version
+// output. Cobra only registers the --version flag once Version is non-empty,
+// so this must be called before Execute.
+func SetVersionInfo(version, commit, date string) {
+	rootCmd.Version = version
+	rootCmd.SetVersionTemplate(fmt.Sprintf("%s version %s (commit %s, built %s)\n", rootCmd.Name(), version, commit, date))
+}
+
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
