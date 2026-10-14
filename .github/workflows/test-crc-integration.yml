@@ -31,7 +31,11 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v7
       with:
-        go-version-file: grab/go.mod
+        # Use CRC's Go version, not grab's: this job runs go mod tidy in the
+        # crc checkout, which fails when the toolchain is older than crc's go
+        # directive (grab's go.mod only tracks CRC's major.minor, per the
+        # version-sync policy, so its patch can legitimately lag).
+        go-version-file: crc/go.mod
         
     - name: Check if CRC uses grab module
       id: check_dependency
