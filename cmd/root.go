@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"crypto/md5"
 	"crypto/sha1"
 	"crypto/sha256"
@@ -9,7 +10,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 
 	"github.com/spf13/cobra"
 )
@@ -127,8 +130,25 @@ func SetVersionInfo(version, commit, date string) {
 	rootCmd.SetVersionTemplate(fmt.Sprintf("%s version %s (commit %s, built %s)\n", rootCmd.Name(), version, commit, date))
 }
 
+// shutdownSignals lists the signals that cancel in-flight downloads. Windows
+// never delivers SIGTERM, but the constant compiles on every platform, so no
+// build tags are needed.
+var shutdownSignals = []os.Signal{os.Interrupt, syscall.SIGTERM}
+
 func Execute() {
-	if err := rootCmd.Execute(); err != nil {
+	// Cancel in-flight downloads on SIGINT/SIGTERM so each response finalizes
+	// with a per-file error and keeps its partial file on disk, instead of the
+	// signal killing the process mid-write.
+	ctx, stop := signal.NotifyContext(context.Background(), shutdownSignals...)
+	defer stop()
+	// Restore the default signal disposition once the first signal arrives so
+	// a second Ctrl-C terminates the process instead of being swallowed while
+	// downloads finalize.
+	go func() {
+		<-ctx.Done()
+		stop()
+	}()
+	if err := rootCmd.ExecuteContext(ctx); err != nil {
 		os.Exit(1)
 	}
 }
