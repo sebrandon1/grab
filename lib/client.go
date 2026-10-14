@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -70,6 +71,42 @@ func NewClient() *Client {
 // DefaultClient is the default client and is used by all Get convenience
 // functions.
 var DefaultClient = NewClient()
+
+// SetTimeout sets the phase-level network timeout (connection dial, TLS
+// handshake, response headers) to d on the client's underlying http.Transport.
+// The total transfer time of a download is not limited, so a slow-but-alive
+// transfer of a large file is never killed.
+//
+// If the transport does not yet have a custom DialContext, one is installed
+// with both the timeout and a 30s TCP keep-alive (matching
+// http.DefaultTransport). If it already has one, only the TLS handshake and
+// response header timeouts are applied and dial behavior is left untouched.
+//
+// SetTimeout is a no-op when d is not positive, or when the client's
+// HTTPClient is not a *http.Client backed by a *http.Transport (such as a
+// test mock). Because it mutates the shared transport, it must be called
+// before the first request is sent.
+func (c *Client) SetTimeout(d time.Duration) {
+	if d <= 0 {
+		return
+	}
+	hc, ok := c.HTTPClient.(*http.Client)
+	if !ok {
+		return
+	}
+	tr, ok := hc.Transport.(*http.Transport)
+	if !ok {
+		return
+	}
+	tr.ResponseHeaderTimeout = d
+	tr.TLSHandshakeTimeout = d
+	if tr.DialContext == nil {
+		tr.DialContext = (&net.Dialer{
+			Timeout:   d,
+			KeepAlive: 30 * time.Second,
+		}).DialContext
+	}
+}
 
 // Do sends a file transfer request and returns a file transfer response,
 // following policy (e.g. redirects, cookies, auth) as configured on the
