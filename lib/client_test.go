@@ -238,6 +238,15 @@ func makeResponse(statusCode int, body string) *http.Response {
 	}
 }
 
+// errCloser is a response body whose Close returns the configured error, to
+// exercise body-close error paths.
+type errCloser struct {
+	io.Reader
+	closeErr error
+}
+
+func (b errCloser) Close() error { return b.closeErr }
+
 func TestClient_RetryOnTransientError(t *testing.T) {
 	// Server returns 503 twice, then 200 — client with RetryLimit:2 should succeed.
 	mock := &sequentialHTTPClient{
@@ -322,6 +331,61 @@ func TestClient_NoRetryOnNonTransient(t *testing.T) {
 	if mock.idx != 1 {
 		t.Errorf("expected 1 request (no retry on 404), got %d", mock.idx)
 	}
+}
+
+func TestClient_BodyCloseError(t *testing.T) {
+	// A response body whose Close fails exercises both halves of the
+	// closeResponse guard: the close error must not mask an earlier error,
+	// and must still surface when no earlier error exists.
+	t.Run("does not mask the status error", func(t *testing.T) {
+		res := makeResponse(404, "not found")
+		res.Body = errCloser{Reader: strings.NewReader("not found"), closeErr: errors.New("close failed")}
+		mock := &sequentialHTTPClient{
+			responses: []*http.Response{res},
+		}
+		client := &Client{
+			HTTPClient: mock,
+			UserAgent:  "test",
+		}
+		req, _ := NewRequest("", "http://example.com/file.txt")
+		req.NoStore = true
+
+		resp := client.Do(req)
+		waitForResponse(t, resp)
+		err := resp.Err()
+		if err == nil {
+			t.Fatal("expected error for 404, got nil")
+		}
+		var codeErr StatusCodeError
+		if !errors.As(err, &codeErr) || int(codeErr) != http.StatusNotFound {
+			t.Errorf("expected StatusCodeError(404) as the root cause, got: %v", err)
+		}
+	})
+
+	t.Run("surfaces when no earlier error exists", func(t *testing.T) {
+		closeErr := errors.New("close failed")
+		res := makeResponse(200, "hello")
+		res.Body = errCloser{Reader: strings.NewReader("hello"), closeErr: closeErr}
+		mock := &sequentialHTTPClient{
+			responses: []*http.Response{res},
+		}
+		client := &Client{
+			HTTPClient: mock,
+			UserAgent:  "test",
+		}
+		req, _ := NewRequest("", "http://example.com/file.txt")
+		req.NoStore = true
+
+		resp := client.Do(req)
+		waitForResponse(t, resp)
+		err := resp.Err()
+		if err == nil {
+			t.Fatal("expected the body-close error to surface, got nil")
+		}
+		if !errors.Is(err, closeErr) {
+			t.Errorf("expected the body-close error to surface, got: %v", err)
+		}
+	})
 }
 
 func TestClient_SetTimeout(t *testing.T) {
