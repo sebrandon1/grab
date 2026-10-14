@@ -170,6 +170,68 @@ func TestRunDownload_VerboseSingleFile(t *testing.T) {
 	}
 }
 
+// A canceled context (as Execute delivers on SIGINT/SIGTERM) must fail the
+// in-flight download, keep the partial file on disk, and exit non-zero.
+func TestRunDownload_ContextCanceled(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Disposition", `attachment; filename="cancel.bin"`)
+		w.Header().Set("Content-Length", "2048")
+		// The lib HEAD-probes for the filename before the GET; answer it
+		// immediately so the held body below only delays the transfer.
+		if r.Method == http.MethodHead {
+			return
+		}
+		_, _ = w.Write([]byte(strings.Repeat("x", 1024)))
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		// Hold the second half until the client goes away (the transport
+		// tears the connection down on context cancel), so the cancellation
+		// lands mid-transfer.
+		select {
+		case <-r.Context().Done():
+		case <-time.After(5 * time.Second):
+		}
+	}))
+	defer srv.Close()
+	dir := chdirTemp(t)
+
+	cmd := newTestCmd()
+	ctx, cancel := context.WithCancel(context.Background())
+	cmd.SetContext(ctx)
+	go func() {
+		// Cancel once the first half is on disk so the cancellation is
+		// guaranteed to land mid-transfer regardless of machine speed; give
+		// up after 5s and cancel anyway so the test fails on its assertions
+		// instead of hanging.
+		partial := filepath.Join(dir, "cancel.bin")
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			if fi, err := os.Stat(partial); err == nil && fi.Size() >= 1024 {
+				break
+			}
+			if time.Now().After(deadline) {
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		cancel()
+	}()
+
+	code := runDownload(cmd, []string{srv.URL}, true)
+
+	if code == 0 {
+		t.Fatal("expected non-zero exit for canceled download")
+	}
+	fi, err := os.Stat(filepath.Join(dir, "cancel.bin"))
+	if err != nil {
+		t.Fatalf("expected partial file to remain after cancellation: %v", err)
+	}
+	if fi.Size() != 1024 {
+		t.Errorf("expected 1024-byte partial file, got %d bytes", fi.Size())
+	}
+}
+
 func TestRunDownload_VerboseMultiFile(t *testing.T) {
 	srv1 := serveFile(t, "alpha", "alpha.bin")
 	defer srv1.Close()
