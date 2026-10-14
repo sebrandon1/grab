@@ -4,10 +4,12 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -69,6 +71,30 @@ func serve404(t *testing.T) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
+	}))
+}
+
+// serveDelayed serves a 2 KiB body in two 1 KiB chunks under filename: the
+// first chunk is flushed immediately, the second after a delay longer than
+// one progress-ticker interval, so verbose progress renders mid-download. A
+// non-positive contentLength omits Content-Length (unknown size). HEAD
+// filename probes get the headers without the delay.
+func serveDelayed(t *testing.T, filename string, contentLength int64) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
+		if contentLength > 0 {
+			w.Header().Set("Content-Length", strconv.FormatInt(contentLength, 10))
+		}
+		if r.Method == http.MethodHead {
+			return
+		}
+		_, _ = w.Write([]byte(strings.Repeat("x", 1024)))
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		time.Sleep(300 * time.Millisecond)
+		_, _ = w.Write([]byte(strings.Repeat("x", 1024)))
 	}))
 }
 
@@ -170,6 +196,71 @@ func TestRunDownload_VerboseSingleFile(t *testing.T) {
 	}
 }
 
+// captureStdout runs fn with os.Stdout redirected to a pipe and returns
+// everything it printed. Stdout is restored via defer so a panic inside fn
+// cannot leave it hijacked for the rest of the package run.
+func captureStdout(t *testing.T, fn func() int) (output string, exitCode int) {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	orig := os.Stdout
+	os.Stdout = w
+	defer func() { os.Stdout = orig }()
+
+	exitCode = fn()
+
+	_ = w.Close()
+	b, _ := io.ReadAll(r)
+	return string(b), exitCode
+}
+
+// runDownloadCapture calls runDownload and captures its stdout output.
+func runDownloadCapture(t *testing.T, cmd *cobra.Command, args []string, verbose bool) (output string, exitCode int) {
+	t.Helper()
+	return captureStdout(t, func() int {
+		return runDownload(cmd, args, verbose)
+	})
+}
+
+// A verbose single-file download with an explicit -o path must render the
+// same live progress bar as the default path.
+func TestRunDownload_VerboseOutputFile(t *testing.T) {
+	srv := serveDelayed(t, "progress.bin", 2048)
+	defer srv.Close()
+	outPath := filepath.Join(t.TempDir(), "progress.bin")
+
+	out, code := runDownloadCapture(t, newTestCmdWithOutput(outPath), []string{srv.URL}, true)
+
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d", code)
+	}
+	if !strings.Contains(out, "Downloading: [") {
+		t.Errorf("expected a progress bar line in verbose output, got %q", out)
+	}
+	if !strings.Contains(out, "50.00%") {
+		t.Errorf("expected the progress bar to show mid-transfer progress, got %q", out)
+	}
+}
+
+// With no Content-Length the bar cannot show a percentage; verbose output
+// still renders byte progress instead.
+func TestRunDownload_VerboseUnknownSize(t *testing.T) {
+	srv := serveDelayed(t, "nosize.bin", 0)
+	defer srv.Close()
+	chdirTemp(t)
+
+	out, code := runDownloadCapture(t, newTestCmd(), []string{srv.URL}, true)
+
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d", code)
+	}
+	if !strings.Contains(out, "Downloading: 1024 bytes complete") {
+		t.Errorf("expected byte-count progress for unknown-size download, got %q", out)
+	}
+}
+
 func TestRunDownload_VerboseMultiFile(t *testing.T) {
 	srv1 := serveFile(t, "alpha", "alpha.bin")
 	defer srv1.Close()
@@ -266,12 +357,15 @@ func TestRunDownload_ChecksumSuccess(t *testing.T) {
 
 	sum := sha256.Sum256([]byte(content))
 
-	code := runDownload(newTestCmdWithSHA256(hex.EncodeToString(sum[:])), []string{srv.URL}, false)
+	out, code := runDownloadCapture(t, newTestCmdWithSHA256(hex.EncodeToString(sum[:])), []string{srv.URL}, true)
 	if code != 0 {
 		t.Fatalf("expected exit 0, got %d", code)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "checksum-ok.bin")); err != nil {
 		t.Errorf("expected checksum-ok.bin on disk: %v", err)
+	}
+	if !strings.Contains(out, "sha256 verified") {
+		t.Errorf("expected verbose summary to note the verified checksum, got %q", out)
 	}
 }
 
