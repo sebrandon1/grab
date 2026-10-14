@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -32,6 +33,13 @@ func newTestCmdWithLimitRate(value string) *cobra.Command {
 	cmd := &cobra.Command{}
 	cmd.SetContext(context.Background())
 	cmd.Flags().String("limit-rate", value, "")
+	return cmd
+}
+
+func newTestCmdWithFile(path string) *cobra.Command {
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+	cmd.Flags().StringP("file", "f", path, "")
 	return cmd
 }
 
@@ -449,7 +457,9 @@ func TestRunDownload_OutputDirectoryMissing(t *testing.T) {
 	defer srv.Close()
 	dir := t.TempDir()
 
-	code := runDownload(newTestCmdWithOutput(filepath.Join(dir, "missing")), []string{srv.URL, srv.URL}, false)
+	// Two distinct URLs: the batch path (and its directory check) is only
+	// reached with multiple URLs, since duplicates are collapsed to one.
+	code := runDownload(newTestCmdWithOutput(filepath.Join(dir, "missing")), []string{srv.URL, srv.URL + "/second"}, false)
 	if code != 1 {
 		t.Fatalf("expected exit 1 for missing output directory, got %d", code)
 	}
@@ -465,7 +475,7 @@ func TestRunDownload_OutputNotDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	code := runDownload(newTestCmdWithOutput(filePath), []string{srv.URL, srv.URL}, false)
+	code := runDownload(newTestCmdWithOutput(filePath), []string{srv.URL, srv.URL + "/second"}, false)
 	if code != 1 {
 		t.Fatalf("expected exit 1 for output path that is not a directory, got %d", code)
 	}
@@ -494,5 +504,137 @@ func TestRunDownload_LimitRateMultipleURLs(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
 			t.Errorf("expected %s on disk: %v", name, err)
 		}
+	}
+}
+
+// writeURLFile writes lines to a new file in a temp dir and returns its path.
+func writeURLFile(t *testing.T, lines ...string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "urls.txt")
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestRunDownload_URLFile(t *testing.T) {
+	srv1 := serveFile(t, "file one", "from-file1.bin")
+	defer srv1.Close()
+	srv2 := serveFile(t, "file two", "from-file2.bin")
+	defer srv2.Close()
+	dir := chdirTemp(t)
+
+	code := runDownload(newTestCmdWithFile(writeURLFile(t,
+		"# two real URLs, one comment, blank lines around them",
+		"",
+		srv1.URL+"\r", // CRLF line ending must be tolerated
+		"   ",
+		srv2.URL,
+		"# trailing comment",
+	)), nil, false)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d", code)
+	}
+	for _, name := range []string{"from-file1.bin", "from-file2.bin"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+			t.Errorf("expected %s on disk: %v", name, err)
+		}
+	}
+}
+
+func TestRunDownload_URLFileWithArgs(t *testing.T) {
+	srv1 := serveFile(t, "positional", "positional.bin")
+	defer srv1.Close()
+	srv2 := serveFile(t, "from file", "from-file.bin")
+	defer srv2.Close()
+	dir := chdirTemp(t)
+
+	code := runDownload(newTestCmdWithFile(writeURLFile(t, "", srv2.URL, "# comment")), []string{srv1.URL}, false)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d", code)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 downloaded files (positional + file URL), got %d", len(entries))
+	}
+}
+
+// A URL given both positionally and in the file must be fetched once:
+// duplicate requests would race to write the same output file.
+func TestRunDownload_URLFileDuplicateURLs(t *testing.T) {
+	// lib probes each URL with a HEAD before the transfer, so count GETs.
+	var gets atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			gets.Add(1)
+		}
+		w.Header().Set("Content-Disposition", `attachment; filename="dup.bin"`)
+		_, _ = w.Write([]byte("dup"))
+	}))
+	defer srv.Close()
+	dir := chdirTemp(t)
+
+	code := runDownload(newTestCmdWithFile(writeURLFile(t, srv.URL)), []string{srv.URL}, false)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d", code)
+	}
+	if n := gets.Load(); n != 1 {
+		t.Errorf("expected exactly 1 GET for the duplicate URL, got %d", n)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "dup.bin")); err != nil {
+		t.Errorf("expected dup.bin on disk: %v", err)
+	}
+}
+
+func TestRunDownload_URLFileMissing(t *testing.T) {
+	chdirTemp(t)
+
+	code := runDownload(newTestCmdWithFile(filepath.Join(t.TempDir(), "missing.txt")), nil, false)
+	if code != 1 {
+		t.Fatalf("expected exit 1 for missing URL file, got %d", code)
+	}
+}
+
+func TestRunDownload_URLFileEmpty(t *testing.T) {
+	srv := serveFile(t, "x", "unused.bin")
+	defer srv.Close()
+	chdirTemp(t)
+
+	code := runDownload(newTestCmdWithFile(writeURLFile(t, "# only comments", "", "   ")), nil, false)
+	if code != 1 {
+		t.Fatalf("expected exit 1 for URL file with no URLs, got %d", code)
+	}
+}
+
+func TestRunDownload_URLFileLongLine(t *testing.T) {
+	chdirTemp(t)
+	// A line over bufio.Scanner's 64KB token limit must surface as a read
+	// error, not a silently truncated URL list.
+
+	code := runDownload(newTestCmdWithFile(writeURLFile(t, strings.Repeat("a", 128*1024))), nil, false)
+	if code != 1 {
+		t.Fatalf("expected exit 1 for URL file with oversized line, got %d", code)
+	}
+}
+
+func TestDownloadCmdArgs(t *testing.T) {
+	if err := downloadCmd.Args(downloadCmd, nil); err == nil {
+		t.Error("expected error for no positional URLs without --file")
+	}
+
+	// pflag only marks a flag Changed on an explicit Set or CLI parse —
+	// registration alone does not — and the Args validator keys on Changed.
+	withFile := newTestCmdWithFile("")
+	if err := withFile.Flags().Set("file", "urls.txt"); err != nil {
+		t.Fatal(err)
+	}
+	if err := downloadCmd.Args(withFile, nil); err != nil {
+		t.Errorf("expected no error with --file set: %v", err)
+	}
+	if err := downloadCmd.Args(downloadCmd, []string{"http://example.com"}); err != nil {
+		t.Errorf("expected no error with positional URL: %v", err)
 	}
 }
