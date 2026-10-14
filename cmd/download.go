@@ -186,39 +186,7 @@ func runDownload(cmd *cobra.Command, args []string, verbose bool) int {
 
 			switch {
 			case verbose && !multiFile:
-				t := time.NewTicker(100 * time.Millisecond)
-				progressDone := make(chan struct{})
-				goroutineDone := make(chan struct{})
-				go func() {
-					defer close(goroutineDone)
-					defer t.Stop()
-					var lastCompleted int64
-					for {
-						select {
-						case <-progressDone:
-							return
-						case <-t.C:
-							size := resp.Size()
-							completed := resp.BytesComplete()
-							if completed == lastCompleted {
-								continue
-							}
-							lastCompleted = completed
-							if size > 0 {
-								percent := float64(completed) / float64(size) * 100
-								filledLen := int(float64(progressBarLen) * float64(completed) / float64(size))
-								bar := "[" + strings.Repeat("=", filledLen) + strings.Repeat(" ", progressBarLen-filledLen) + "]"
-								fmt.Printf("\rDownloading: %s %6.2f%% (%d/%d bytes)", bar, percent, completed, size)
-							} else {
-								fmt.Printf("\rDownloading: %d bytes complete", completed)
-							}
-						}
-					}
-				}()
-				<-resp.Done
-				close(progressDone)
-				<-goroutineDone
-				fmt.Println()
+				trackProgress(resp)
 			case verbose && multiFile:
 				fmt.Printf("Downloading %s...\n", resp.Filename)
 				<-resp.Done
@@ -237,6 +205,46 @@ func runDownload(cmd *cobra.Command, args []string, verbose bool) int {
 
 	wg.Wait()
 	return int(failed.Load())
+}
+
+// trackProgress renders the live progress bar for a single verbose download,
+// blocking until resp completes. The double wait — close(progressDone), then
+// <-goroutineDone — guarantees the trailing newline prints only after the last
+// bar render.
+func trackProgress(resp *lib.Response) {
+	t := time.NewTicker(100 * time.Millisecond)
+	progressDone := make(chan struct{})
+	goroutineDone := make(chan struct{})
+	go func() {
+		defer close(goroutineDone)
+		defer t.Stop()
+		var lastCompleted int64
+		for {
+			select {
+			case <-progressDone:
+				return
+			case <-t.C:
+				size := resp.Size()
+				completed := resp.BytesComplete()
+				if completed == lastCompleted {
+					continue
+				}
+				lastCompleted = completed
+				if size > 0 {
+					percent := float64(completed) / float64(size) * 100
+					filledLen := int(float64(progressBarLen) * float64(completed) / float64(size))
+					bar := "[" + strings.Repeat("=", filledLen) + strings.Repeat(" ", progressBarLen-filledLen) + "]"
+					fmt.Printf("\rDownloading: %s %6.2f%% (%d/%d bytes)", bar, percent, completed, size)
+				} else {
+					fmt.Printf("\rDownloading: %d bytes complete", completed)
+				}
+			}
+		}
+	}()
+	resp.Wait()
+	close(progressDone)
+	<-goroutineDone
+	fmt.Println()
 }
 
 func runChecksumDownload(ctx context.Context, args []string, verbose bool, out, sumHex string, limiter *rate.Limiter) int {
@@ -266,9 +274,12 @@ func downloadSingle(ctx context.Context, dst, url string, sum []byte, limiter *r
 
 	resp := lib.DefaultClient.Do(req)
 	if verbose {
-		fmt.Printf("Downloading %s...\n", url)
+		// Same live progress bar as the default single-file path, so -o does
+		// not change the verbose output.
+		trackProgress(resp)
+	} else {
+		<-resp.Done
 	}
-	<-resp.Done
 	if err := resp.Err(); err != nil {
 		if errors.Is(err, lib.ErrBadChecksum) {
 			fmt.Fprintf(os.Stderr, "Failed: %s (checksum mismatch; file deleted, verify the --sha256 value)\n", resp.Filename)
