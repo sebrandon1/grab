@@ -98,6 +98,54 @@ func serveDelayed(t *testing.T, filename string, contentLength int64) *httptest.
 	}))
 }
 
+// serveHeldChunks serves a 2048-byte "cancel.bin" in two flushed 1024-byte
+// halves, holding the second half until the client disconnects (the
+// transport tears down the connection on context cancel) so a cancellation
+// lands mid-transfer. If the context is never propagated, the hold expires
+// and the file completes, failing the test's exit-code assertion instead of
+// a truncated body masking the missing wiring.
+func serveHeldChunks(t *testing.T) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Disposition", `attachment; filename="cancel.bin"`)
+		w.Header().Set("Content-Length", "2048")
+		// The batch path HEAD-probes for the filename before the GET; answer
+		// it immediately so the held body below only delays the transfer.
+		// The -o path skips the probe (destination filename already known).
+		if r.Method == http.MethodHead {
+			return
+		}
+		_, _ = w.Write([]byte(strings.Repeat("x", 1024)))
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		select {
+		case <-r.Context().Done():
+		case <-time.After(5 * time.Second):
+		}
+		_, _ = w.Write([]byte(strings.Repeat("x", 1024)))
+	}))
+}
+
+// cancelWhenWritten cancels ctx once path holds at least minSize bytes, so a
+// cancellation lands mid-transfer regardless of machine speed. The give-up
+// deadline stays well under serveHeldChunks' 5s hold: on a stalled runner the
+// cancel must fire first, or the hold timer completes the file and the test
+// fails with the signature of the very regression it guards against.
+func cancelWhenWritten(cancel context.CancelFunc, path string, minSize int64) {
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if fi, err := os.Stat(path); err == nil && fi.Size() >= minSize {
+			break
+		}
+		if time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+}
+
 func TestRunDownload_SingleFile(t *testing.T) {
 	srv := serveFile(t, "hello world", "testfile.bin")
 	defer srv.Close()
@@ -199,50 +247,15 @@ func TestRunDownload_VerboseSingleFile(t *testing.T) {
 // A canceled context (as Execute delivers on SIGINT/SIGTERM) must fail the
 // in-flight download, keep the partial file on disk, and exit non-zero.
 func TestRunDownload_ContextCanceled(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Disposition", `attachment; filename="cancel.bin"`)
-		w.Header().Set("Content-Length", "2048")
-		// The lib HEAD-probes for the filename before the GET; answer it
-		// immediately so the held body below only delays the transfer.
-		if r.Method == http.MethodHead {
-			return
-		}
-		_, _ = w.Write([]byte(strings.Repeat("x", 1024)))
-		if f, ok := w.(http.Flusher); ok {
-			f.Flush()
-		}
-		// Hold the second half until the client goes away (the transport
-		// tears the connection down on context cancel), so the cancellation
-		// lands mid-transfer.
-		select {
-		case <-r.Context().Done():
-		case <-time.After(5 * time.Second):
-		}
-	}))
+	srv := serveHeldChunks(t)
 	defer srv.Close()
 	dir := chdirTemp(t)
 
 	cmd := newTestCmd()
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	cmd.SetContext(ctx)
-	go func() {
-		// Cancel once the first half is on disk so the cancellation is
-		// guaranteed to land mid-transfer regardless of machine speed; give
-		// up after 5s and cancel anyway so the test fails on its assertions
-		// instead of hanging.
-		partial := filepath.Join(dir, "cancel.bin")
-		deadline := time.Now().Add(5 * time.Second)
-		for {
-			if fi, err := os.Stat(partial); err == nil && fi.Size() >= 1024 {
-				break
-			}
-			if time.Now().After(deadline) {
-				break
-			}
-			time.Sleep(10 * time.Millisecond)
-		}
-		cancel()
-	}()
+	go cancelWhenWritten(cancel, filepath.Join(dir, "cancel.bin"), 1024)
 
 	code := runDownload(cmd, []string{srv.URL}, true)
 
@@ -250,6 +263,34 @@ func TestRunDownload_ContextCanceled(t *testing.T) {
 		t.Fatal("expected non-zero exit for canceled download")
 	}
 	fi, err := os.Stat(filepath.Join(dir, "cancel.bin"))
+	if err != nil {
+		t.Fatalf("expected partial file to remain after cancellation: %v", err)
+	}
+	if fi.Size() != 1024 {
+		t.Errorf("expected 1024-byte partial file, got %d bytes", fi.Size())
+	}
+}
+
+// The -o single-file path must propagate the command context the same way
+// the batch path does: a canceled context fails the in-flight download,
+// keeps the partial file at the requested path, and exits non-zero.
+func TestRunDownload_ContextCanceledOutputFile(t *testing.T) {
+	srv := serveHeldChunks(t)
+	defer srv.Close()
+	outPath := filepath.Join(t.TempDir(), "cancel.bin")
+
+	cmd := newTestCmdWithOutput(outPath)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cmd.SetContext(ctx)
+	go cancelWhenWritten(cancel, outPath, 1024)
+
+	code := runDownload(cmd, []string{srv.URL}, true)
+
+	if code == 0 {
+		t.Fatal("expected non-zero exit for canceled download")
+	}
+	fi, err := os.Stat(outPath)
 	if err != nil {
 		t.Fatalf("expected partial file to remain after cancellation: %v", err)
 	}
