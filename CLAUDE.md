@@ -76,7 +76,7 @@ if err := resp.Err(); err != nil {
 
 ## Requirements
 
-- Go 1.25+
+- Go 1.26+
 
 ## Code Style
 
