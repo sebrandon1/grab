@@ -15,11 +15,6 @@ permissions: read-all
 jobs:
   test-crc-integration:
     runs-on: ubuntu-latest
-    env:
-      # grab's go.mod may require a newer patch release than CRC's (e.g. for
-      # security fixes), so allow Go to fetch the newer toolchain when the
-      # replaced grab module demands it.
-      GOTOOLCHAIN: auto
 
     steps:
     - name: Checkout grab repository
@@ -41,7 +36,13 @@ jobs:
         # directive (grab's go.mod only tracks CRC's major.minor, per the
         # version-sync policy, so its patch can legitimately lag).
         go-version-file: crc/go.mod
-        
+
+    - name: Allow toolchain upgrade
+      # grab's go.mod may require a newer patch release than CRC's (e.g. for
+      # security fixes). setup-go pins GOTOOLCHAIN=local, so re-enable
+      # auto-download for the remaining steps.
+      run: echo "GOTOOLCHAIN=auto" >> "$GITHUB_ENV"
+
     - name: Check if CRC uses grab module
       id: check_dependency
       run: |
