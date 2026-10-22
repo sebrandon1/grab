@@ -15,7 +15,12 @@ permissions: read-all
 jobs:
   test-crc-integration:
     runs-on: ubuntu-latest
-    
+    env:
+      # grab's go.mod may require a newer patch release than CRC's (e.g. for
+      # security fixes), so allow Go to fetch the newer toolchain when the
+      # replaced grab module demands it.
+      GOTOOLCHAIN: auto
+
     steps:
     - name: Checkout grab repository
       uses: actions/checkout@v7
