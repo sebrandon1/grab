@@ -465,7 +465,10 @@ func TestRetryAfter(t *testing.T) {
 	}{
 		{"absent", "", 0, false},
 		{"seconds", "30", 30 * time.Second, true},
-		{"zero seconds", "0", 0, true},
+		// httpx.ParseRetryAfter treats zero delta-seconds as "no delay", so it
+		// is indistinguishable from a missing header. Either way the caller
+		// keeps its RetryDelay floor, so the download behavior is unchanged.
+		{"zero seconds", "0", 0, false},
 		{"at cap", "300", 300 * time.Second, true},
 		{"over cap", "301", 0, false},
 		{"negative seconds", "-5", 0, false},
