@@ -7,6 +7,9 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -1132,6 +1135,14 @@ func TestClient_getRequest_ContentRange(t *testing.T) {
 			statusCode:   http.StatusOK,
 			expectError:  false,
 		},
+		{
+			name:         "server ignored range request",
+			contentRange: "",
+			bytesResumed: 100,
+			didResume:    true,
+			statusCode:   http.StatusOK,
+			expectError:  false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -1186,7 +1197,64 @@ func TestClient_getRequest_ContentRange(t *testing.T) {
 			if !tt.expectError && resp.err != nil {
 				t.Errorf("Unexpected error: %v", resp.err)
 			}
+			// A 200 to a resumed request means the server ignored the Range
+			// header; grab must restart the transfer from offset 0.
+			if tt.didResume && tt.statusCode == http.StatusOK {
+				if resp.DidResume {
+					t.Error("DidResume = true after a 200 response to a Range request")
+				}
+				if resp.bytesResumed != 0 {
+					t.Errorf("bytesResumed = %d after a 200 response, want 0", resp.bytesResumed)
+				}
+			}
 		})
+	}
+}
+
+// TestClient_Resume_ServerIgnoresRange verifies a resumed download whose
+// server answers with 200 and the full body does not append to the partial
+// file (which would silently corrupt it).
+func TestClient_Resume_ServerIgnoresRange(t *testing.T) {
+	const fullBody = "HelloWorld"
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Accept-Ranges", "bytes")
+		w.Header().Set("Content-Length", strconv.Itoa(len(fullBody)))
+		if r.Method == http.MethodHead {
+			return
+		}
+		// Deliberately ignore any Range header and send the whole body.
+		_, _ = w.Write([]byte(fullBody))
+	}))
+	defer server.Close()
+
+	path := filepath.Join(t.TempDir(), "partial.bin")
+	if err := os.WriteFile(path, []byte("Hello"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	req, err := NewRequest(path, server.URL+"/partial.bin")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resp := NewClient().Do(req)
+	if err := resp.Err(); err != nil {
+		t.Fatalf("download failed: %v", err)
+	}
+	if resp.DidResume {
+		t.Error("DidResume = true, want false after the server ignored Range")
+	}
+	if got := resp.Size(); got != int64(len(fullBody)) {
+		t.Errorf("Size() = %d, want %d", got, len(fullBody))
+	}
+
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != fullBody {
+		t.Errorf("file content = %q, want %q (partial file was appended to, not replaced)", got, fullBody)
 	}
 }
 
