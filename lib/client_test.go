@@ -603,7 +603,12 @@ func TestClient_DoChannel(t *testing.T) {
 	var lastErr error
 
 	for attempt := 1; attempt <= maxRetries; attempt++ {
-		success := t.Run(fmt.Sprintf("attempt_%d", attempt), func(t *testing.T) {
+		lastErr = nil
+		// A failed attempt is recorded in lastErr and only reported after the
+		// retry loop, so a transient failure followed by a success passes.
+		// Keep the subtest body log-only: t.Error/t.Fatal here would fail the
+		// attempt permanently, even when a later retry succeeds.
+		t.Run(fmt.Sprintf("attempt_%d", attempt), func(t *testing.T) {
 			client := &Client{
 				HTTPClient: DefaultClient.HTTPClient,
 				UserAgent:  "test-agent",
@@ -643,7 +648,7 @@ func TestClient_DoChannel(t *testing.T) {
 					responses = append(responses, resp)
 				case <-timeout:
 					lastErr = errors.New("DoChannel test timed out after 15 seconds")
-					t.Error(lastErr)
+					t.Logf("attempt %d failed: %v", attempt, lastErr)
 					return
 				}
 			}
@@ -652,7 +657,7 @@ func TestClient_DoChannel(t *testing.T) {
 
 			if len(responses) != 2 {
 				lastErr = fmt.Errorf("Expected 2 responses, got %d", len(responses))
-				t.Error(lastErr)
+				t.Logf("attempt %d failed: %v", attempt, lastErr)
 				return
 			}
 
@@ -660,18 +665,18 @@ func TestClient_DoChannel(t *testing.T) {
 			for i, resp := range responses {
 				if !resp.IsComplete() {
 					lastErr = fmt.Errorf("Response %d should be complete", i)
-					t.Error(lastErr)
+					t.Logf("attempt %d failed: %v", attempt, lastErr)
 					return
 				}
 				if resp.Err() != nil {
 					lastErr = fmt.Errorf("Response %d has error: %v", i, resp.Err())
-					t.Error(lastErr)
+					t.Logf("attempt %d failed: %v", attempt, lastErr)
 					return
 				}
 			}
 		})
 
-		if success {
+		if lastErr == nil {
 			if attempt > 1 {
 				t.Logf("DoChannel test succeeded on attempt %d/%d", attempt, maxRetries)
 			}
@@ -680,6 +685,7 @@ func TestClient_DoChannel(t *testing.T) {
 
 		if attempt < maxRetries {
 			t.Logf("DoChannel test attempt %d/%d failed, retrying...", attempt, maxRetries)
+			resetWorkingURLs() // re-probe in case a cached host started rate-limiting
 			time.Sleep(time.Duration(attempt) * 200 * time.Millisecond)
 		}
 	}
@@ -695,7 +701,12 @@ func TestClient_DoBatch(t *testing.T) {
 	var lastErr error
 
 	for attempt := 1; attempt <= maxRetries; attempt++ {
-		success := t.Run(fmt.Sprintf("attempt_%d", attempt), func(t *testing.T) {
+		lastErr = nil
+		// A failed attempt is recorded in lastErr and only reported after the
+		// retry loop, so a transient failure followed by a success passes.
+		// Keep the subtest body log-only: t.Error/t.Fatal here would fail the
+		// attempt permanently, even when a later retry succeeds.
+		t.Run(fmt.Sprintf("attempt_%d", attempt), func(t *testing.T) {
 			client := &Client{
 				HTTPClient: DefaultClient.HTTPClient,
 				UserAgent:  "test-agent",
@@ -730,14 +741,14 @@ func TestClient_DoBatch(t *testing.T) {
 					responses = append(responses, resp)
 				case <-timeout:
 					lastErr = errors.New("DoBatch test timed out after 20 seconds")
-					t.Error(lastErr)
+					t.Logf("attempt %d failed: %v", attempt, lastErr)
 					return
 				}
 			}
 
 			if len(responses) != 3 {
 				lastErr = fmt.Errorf("Expected 3 responses, got %d", len(responses))
-				t.Error(lastErr)
+				t.Logf("attempt %d failed: %v", attempt, lastErr)
 				return
 			}
 
@@ -745,18 +756,18 @@ func TestClient_DoBatch(t *testing.T) {
 			for i, resp := range responses {
 				if !resp.IsComplete() {
 					lastErr = fmt.Errorf("Response %d should be complete", i)
-					t.Error(lastErr)
+					t.Logf("attempt %d failed: %v", attempt, lastErr)
 					return
 				}
 				if resp.Err() != nil {
 					lastErr = fmt.Errorf("Response %d error: %v", i, resp.Err())
-					t.Error(lastErr)
+					t.Logf("attempt %d failed: %v", attempt, lastErr)
 					return
 				}
 			}
 		})
 
-		if success {
+		if lastErr == nil {
 			if attempt > 1 {
 				t.Logf("DoBatch test succeeded on attempt %d/%d", attempt, maxRetries)
 			}
@@ -765,6 +776,7 @@ func TestClient_DoBatch(t *testing.T) {
 
 		if attempt < maxRetries {
 			t.Logf("DoBatch test attempt %d/%d failed, retrying...", attempt, maxRetries)
+			resetWorkingURLs() // re-probe in case a cached host started rate-limiting
 			time.Sleep(time.Duration(attempt) * 200 * time.Millisecond)
 		}
 	}
@@ -780,7 +792,12 @@ func TestClient_DoBatch_UnlimitedWorkers(t *testing.T) {
 	var lastErr error
 
 	for attempt := 1; attempt <= maxRetries; attempt++ {
-		success := t.Run(fmt.Sprintf("attempt_%d", attempt), func(t *testing.T) {
+		lastErr = nil
+		// A failed attempt is recorded in lastErr and only reported after the
+		// retry loop, so a transient failure followed by a success passes.
+		// Keep the subtest body log-only: t.Error/t.Fatal here would fail the
+		// attempt permanently, even when a later retry succeeds.
+		t.Run(fmt.Sprintf("attempt_%d", attempt), func(t *testing.T) {
 			client := &Client{
 				HTTPClient: DefaultClient.HTTPClient,
 				UserAgent:  "test-agent",
@@ -806,31 +823,31 @@ func TestClient_DoBatch_UnlimitedWorkers(t *testing.T) {
 					responses = append(responses, resp)
 				case <-timeout:
 					lastErr = errors.New("DoBatch_UnlimitedWorkers test timed out after 10 seconds")
-					t.Error(lastErr)
+					t.Logf("attempt %d failed: %v", attempt, lastErr)
 					return
 				}
 			}
 
 			if len(responses) != 1 {
 				lastErr = fmt.Errorf("Expected 1 response, got %d", len(responses))
-				t.Error(lastErr)
+				t.Logf("attempt %d failed: %v", attempt, lastErr)
 				return
 			}
 
 			// Verify the transfer completed successfully
 			if !responses[0].IsComplete() {
 				lastErr = errors.New("Response should be complete")
-				t.Error(lastErr)
+				t.Logf("attempt %d failed: %v", attempt, lastErr)
 				return
 			}
 			if responses[0].Err() != nil {
 				lastErr = fmt.Errorf("Response error: %v", responses[0].Err())
-				t.Error(lastErr)
+				t.Logf("attempt %d failed: %v", attempt, lastErr)
 				return
 			}
 		})
 
-		if success {
+		if lastErr == nil {
 			if attempt > 1 {
 				t.Logf("DoBatch_UnlimitedWorkers test succeeded on attempt %d/%d", attempt, maxRetries)
 			}
@@ -839,6 +856,7 @@ func TestClient_DoBatch_UnlimitedWorkers(t *testing.T) {
 
 		if attempt < maxRetries {
 			t.Logf("DoBatch_UnlimitedWorkers test attempt %d/%d failed, retrying...", attempt, maxRetries)
+			resetWorkingURLs() // re-probe in case a cached host started rate-limiting
 			time.Sleep(time.Duration(attempt) * 200 * time.Millisecond)
 		}
 	}
