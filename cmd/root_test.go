@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 )
 
@@ -27,5 +28,30 @@ func TestRootCmd_VersionOutput(t *testing.T) {
 	want := "grab version v1.2.3 (commit deadbee, built 2026-10-14T00:00:00Z)\n"
 	if got := buf.String(); got != want {
 		t.Errorf("version output\ngot:  %q\nwant: %q", got, want)
+	}
+}
+
+// TestRootCmd_HelpListsAllHashAlgorithms guards the root help text against
+// drifting from the hash command: every algorithm the hash command accepts
+// must be advertised.
+func TestRootCmd_HelpListsAllHashAlgorithms(t *testing.T) {
+	var buf bytes.Buffer
+	origOut := rootCmd.OutOrStdout()
+	t.Cleanup(func() {
+		rootCmd.SetOut(origOut)
+		rootCmd.SetArgs(nil)
+	})
+
+	rootCmd.SetOut(&buf)
+	rootCmd.SetArgs([]string{"--help"})
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("--help returned error: %v", err)
+	}
+
+	help := buf.String()
+	for _, alg := range []string{"MD5", "SHA1", "SHA256", "SHA512"} {
+		if !strings.Contains(help, alg) {
+			t.Errorf("root help does not mention %s\n%s", alg, help)
+		}
 	}
 }
