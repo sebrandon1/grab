@@ -31,7 +31,7 @@ Key features:
 • Download single or multiple files concurrently
 • Automatic filename detection from Content-Disposition headers
 • Real-time progress tracking with verbose mode
-• Built-in file hash computation (MD5, SHA1, SHA256)
+• Built-in file hash computation (MD5, SHA1, SHA256, SHA512)
 • Clean, modern CLI interface`,
 	Example: `  # Download a file
   grab download https://github.com/sebrandon1/grab/archive/refs/heads/main.zip
