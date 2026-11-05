@@ -204,7 +204,17 @@ func runDownload(cmd *cobra.Command, args []string, verbose bool) int {
 	}
 
 	wg.Wait()
-	return int(failed.Load())
+	return exitCode(failed.Load())
+}
+
+// exitCode maps a failure count to a process exit status. Exit statuses are
+// 8-bit, so returning the raw count would wrap to 0 at 256 failures and report
+// a fully failed run as success.
+func exitCode(failed int32) int {
+	if failed > 0 {
+		return 1
+	}
+	return 0
 }
 
 // trackProgress renders the live progress bar for a single verbose download,
