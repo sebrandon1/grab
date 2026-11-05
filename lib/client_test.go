@@ -7,6 +7,9 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -1245,5 +1248,47 @@ func BenchmarkClient_doHTTPRequest(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, _ = client.doHTTPRequest(req)
+	}
+}
+
+// downloadForPermTest performs a real download into a fresh temp directory and
+// returns the created file's FileInfo.
+func downloadForPermTest(t *testing.T) os.FileInfo {
+	t.Helper()
+
+	const content = "permission check"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", strconv.Itoa(len(content)))
+		_, _ = w.Write([]byte(content))
+	}))
+	t.Cleanup(server.Close)
+
+	dir := t.TempDir()
+	req, err := NewRequest(dir, server.URL+"/perm.bin")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resp := NewClient().Do(req)
+	if err := resp.Err(); err != nil {
+		t.Fatalf("download failed: %v", err)
+	}
+
+	fi, err := os.Stat(filepath.Join(dir, "perm.bin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return fi
+}
+
+// TestClient_DownloadedFilePermissions verifies that newly created download
+// files are not group- or world-writable, independent of the process umask.
+func TestClient_DownloadedFilePermissions(t *testing.T) {
+	perm := downloadForPermTest(t).Mode().Perm()
+	if perm&0o022 != 0 {
+		t.Errorf("downloaded file mode = %#o, want group/world write bits clear", perm)
+	}
+	if perm&0o600 != 0o600 {
+		t.Errorf("downloaded file mode = %#o, want owner read/write set", perm)
 	}
 }

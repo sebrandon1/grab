@@ -583,7 +583,7 @@ func (c *Client) openWriter(resp *Response) stateFunc {
 		}
 
 		// open file
-		f, err := os.OpenFile(resp.Filename, flag, 0666)
+		f, err := os.OpenFile(resp.Filename, flag, 0644)
 		if err != nil {
 			resp.err = err
 			return c.closeResponse
