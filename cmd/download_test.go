@@ -230,6 +230,44 @@ func TestRunDownload_PartialFailure(t *testing.T) {
 	}
 }
 
+func TestExitCode(t *testing.T) {
+	tests := []struct {
+		name   string
+		failed int32
+		want   int
+	}{
+		{name: "no failures", failed: 0, want: 0},
+		{name: "one failure", failed: 1, want: 1},
+		{name: "many failures", failed: 255, want: 1},
+		{name: "count wraps to zero at 256", failed: 256, want: 1},
+		{name: "multiple of 256", failed: 512, want: 1},
+		{name: "large count", failed: 1000, want: 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := exitCode(tt.failed); got != tt.want {
+				t.Errorf("exitCode(%d) = %d, want %d", tt.failed, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRunDownload_ManyFailures(t *testing.T) {
+	srv := serve404(t)
+	defer srv.Close()
+	chdirTemp(t)
+
+	// Distinct paths so uniqueURLs keeps all 256 requests.
+	urls := make([]string, 256)
+	for i := range urls {
+		urls[i] = srv.URL + "/missing-" + strconv.Itoa(i) + ".bin"
+	}
+
+	if code := runDownload(newTestCmd(), urls, false); code != 1 {
+		t.Fatalf("expected exit 1 with 256 failed downloads, got %d", code)
+	}
+}
+
 func TestRunDownload_VerboseSingleFile(t *testing.T) {
 	srv := serveFile(t, strings.Repeat("x", 1024), "testfile.bin")
 	defer srv.Close()
