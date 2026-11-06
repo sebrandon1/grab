@@ -75,6 +75,7 @@ See [lib/README.md](lib/README.md) for the full API reference.
 ```bash
 make build          # Build the binary
 make test           # Run tests with coverage
+make test-race      # Run tests with the race detector (as CI does)
 make lint           # Run golangci-lint
 make vet            # Run go vet
 ```

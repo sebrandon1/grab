@@ -17,7 +17,7 @@ Download one or more files from URLs. Multiple URLs are fetched concurrently.
 |------|-------|---------|-------------|
 | `--verbose` | `-v` | false | Show real-time progress bar (single URL) or start/completion messages (multiple URLs) |
 | `--output` | `-o` | — | Output file path (single URL) or destination directory (multiple URLs) |
-| `--retries` | — | `0` | Number of retry attempts for transient HTTP errors (5xx, 429) |
+| `--retries` | — | `0` | Number of retry attempts for transient HTTP errors (`429`, `500`, `502`, `503`, `504`); other status codes are not retried |
 | `--timeout` | — | `0s` | Network phase timeout (dial, TLS handshake, response headers), e.g. `30s`. Does not limit total transfer time. `0` disables |
 | `--sha256` | — | — | Verify the download against a hex-encoded SHA-256 checksum; on mismatch the file is deleted and the command exits 1 (single URL only) |
 | `--limit-rate` | — | — | Limit download rate, e.g. `200k` or `2m`; caps aggregate throughput across concurrent downloads |
