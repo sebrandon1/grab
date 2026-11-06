@@ -153,6 +153,27 @@ func TestMkdirp_Success(t *testing.T) {
 	}
 }
 
+func TestMkdirp_Permissions(t *testing.T) {
+	setupTestDirectoryWithCleanup(t, "util_mkdirp_permissions")
+
+	testPath := filepath.Join("perm", "nested", "test.txt")
+	if err := mkdirp(testPath); err != nil {
+		t.Fatalf("mkdirp() returned error: %v", err)
+	}
+
+	info, err := os.Stat("perm")
+	if err != nil {
+		t.Fatalf("created directory missing: %v", err)
+	}
+	perm := info.Mode().Perm()
+	if perm&0o022 != 0 {
+		t.Errorf("created directory mode = %#o, want group/world write bits clear", perm)
+	}
+	if perm&0o700 != 0o700 {
+		t.Errorf("created directory mode = %#o, want owner read/write/execute set", perm)
+	}
+}
+
 func TestMkdirp_ExistingDirectory(t *testing.T) {
 	setupTestDirectoryWithCleanup(t, "util_mkdirp_existing")
 
