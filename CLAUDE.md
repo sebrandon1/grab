@@ -32,6 +32,7 @@ make build
 ```bash
 go test ./...
 make test
+make test-race   # what pre-main CI runs
 ```
 
 ### Lint and Vet
