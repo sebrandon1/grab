@@ -2,7 +2,7 @@ module github.com/sebrandon1/grab
 
 go 1.26.0
 
-toolchain go1.26.10
+toolchain go1.26.11
 
 require (
 	github.com/sebrandon1/go-toolbox v0.1.2
