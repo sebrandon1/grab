@@ -36,10 +36,10 @@ curl -L https://github.com/sebrandon1/grab/releases/latest/download/grab-windows
 Requirements: Go 1.26 or newer
 
 `go.mod` declares `go 1.26.0` as the minimum and suggests a patched compiler with
-`toolchain go1.26.10`. With the default `GOTOOLCHAIN=auto`, Go selects that toolchain
+`toolchain go1.26.11`. With the default `GOTOOLCHAIN=auto`, Go selects that toolchain
 automatically. If you build with `GOTOOLCHAIN=local`, any Go 1.26.x is accepted, but you
 are responsible for using a release that includes security fixes such as GO-2026-6809
-(Go 1.26.10 or newer).
+(Go 1.26.11 or newer).
 
 ```bash
 git clone https://github.com/sebrandon1/grab.git
